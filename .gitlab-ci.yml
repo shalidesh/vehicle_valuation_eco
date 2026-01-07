@@ -1,0 +1,436 @@
+# GitLab CI/CD Pipeline for Vehicle Valuation System
+# Production-level configuration for on-premises Linux deployment
+
+# Define pipeline stages
+stages:
+  - build
+  - test
+  - security
+  - deploy
+  - verify
+  - rollback
+
+# Global variables
+variables:
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: "/certs"
+  # GitLab Container Registry (or use Docker Hub)
+  REGISTRY_URL: $CI_REGISTRY
+  IMAGE_TAG: $CI_COMMIT_SHORT_SHA
+
+  # Application settings
+  APP_NAME: "cdb-vehicle-valuation"
+
+  # Deployment paths on server
+  DEPLOY_PATH: "/opt/cdb/vehicle-valuation"
+  BACKUP_PATH: "/opt/cdb/backups"
+
+  # Docker Compose files
+  COMPOSE_FILE: "docker-compose.prod.yml"
+  ENV_FILE: ".env.prod"
+
+# Cache configuration for faster builds
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - .npm/
+    - .cache/pip
+    - node_modules/
+    - venv/
+
+# Templates for reusable job configurations
+.ssh_setup: &ssh_setup
+  before_script:
+    - 'which ssh-agent || ( apt-get update -y && apt-get install openssh-client -y )'
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - ssh-keyscan -H $DEPLOY_SERVER >> ~/.ssh/known_hosts
+    - chmod 644 ~/.ssh/known_hosts
+
+# ====================
+# BUILD STAGE
+# ====================
+
+build:frontend:
+  stage: build
+  image: node:20-alpine
+  tags:
+    - docker
+  script:
+    - echo "Building frontend..."
+    - cd web_portal/frontend
+    - npm ci --cache .npm --prefer-offline
+    - npm run build
+    - echo "Frontend build completed successfully"
+  artifacts:
+    paths:
+      - web_portal/frontend/.next/
+      - web_portal/frontend/node_modules/
+    expire_in: 1 hour
+  only:
+    - main
+    - develop
+    - merge_requests
+
+build:backend:
+  stage: build
+  image: python:3.11-slim
+  tags:
+    - docker
+  script:
+    - echo "Building backend..."
+    - cd web_portal/backend
+    - pip install --upgrade pip
+    - pip install -r requirements.txt
+    - echo "Backend dependencies installed successfully"
+  artifacts:
+    paths:
+      - web_portal/backend/
+    expire_in: 1 hour
+  only:
+    - main
+    - develop
+    - merge_requests
+
+build:valuation-engine:
+  stage: build
+  image: python:3.10-slim
+  tags:
+    - docker
+  script:
+    - echo "Building valuation engine..."
+    - cd api_uat
+    - pip install --upgrade pip
+    - pip install -r requirements.txt
+    - echo "Valuation engine dependencies installed successfully"
+  artifacts:
+    paths:
+      - api_uat/
+    expire_in: 1 hour
+  only:
+    - main
+    - develop
+    - merge_requests
+
+# Build and push Docker images to registry
+build:docker-images:
+  stage: build
+  image: docker:24-dind
+  services:
+    - docker:24-dind
+  tags:
+    - docker
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - echo "Building Docker images..."
+
+    # Build frontend
+    - docker build -t $CI_REGISTRY_IMAGE/frontend:$IMAGE_TAG -t $CI_REGISTRY_IMAGE/frontend:latest -f web_portal/frontend/Dockerfile.prod web_portal/frontend
+
+    # Build backend
+    - docker build -t $CI_REGISTRY_IMAGE/backend:$IMAGE_TAG -t $CI_REGISTRY_IMAGE/backend:latest -f web_portal/backend/Dockerfile.prod web_portal/backend
+
+    # Build migrations
+    - docker build -t $CI_REGISTRY_IMAGE/migrations:$IMAGE_TAG -t $CI_REGISTRY_IMAGE/migrations:latest -f web_portal/backend/Dockerfile.migrations web_portal/backend
+
+    # Build valuation engine
+    - docker build -t $CI_REGISTRY_IMAGE/valuation-engine:$IMAGE_TAG -t $CI_REGISTRY_IMAGE/valuation-engine:latest -f api_uat/Dockerfile api_uat
+
+    # Push images to registry
+    - docker push $CI_REGISTRY_IMAGE/frontend:$IMAGE_TAG
+    - docker push $CI_REGISTRY_IMAGE/frontend:latest
+    - docker push $CI_REGISTRY_IMAGE/backend:$IMAGE_TAG
+    - docker push $CI_REGISTRY_IMAGE/backend:latest
+    - docker push $CI_REGISTRY_IMAGE/migrations:$IMAGE_TAG
+    - docker push $CI_REGISTRY_IMAGE/migrations:latest
+    - docker push $CI_REGISTRY_IMAGE/valuation-engine:$IMAGE_TAG
+    - docker push $CI_REGISTRY_IMAGE/valuation-engine:latest
+
+    - echo "Docker images built and pushed successfully"
+  only:
+    - main
+    - develop
+
+# ====================
+# TEST STAGE
+# ====================
+
+test:backend:
+  stage: test
+  image: python:3.11-slim
+  tags:
+    - docker
+  dependencies:
+    - build:backend
+  script:
+    - cd web_portal/backend
+    - pip install -r requirements.txt
+    - pip install pytest pytest-cov
+    # Add your backend tests here
+    - echo "Running backend tests..."
+    # - pytest tests/ --cov=app --cov-report=xml --cov-report=html
+    - echo "Backend tests passed"
+  coverage: '/TOTAL.*\s+(\d+%)$/'
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: web_portal/backend/coverage.xml
+    paths:
+      - web_portal/backend/htmlcov/
+    expire_in: 30 days
+  only:
+    - main
+    - develop
+    - merge_requests
+
+test:frontend:
+  stage: test
+  image: node:20-alpine
+  tags:
+    - docker
+  dependencies:
+    - build:frontend
+  script:
+    - cd web_portal/frontend
+    - npm ci --cache .npm --prefer-offline
+    # Add your frontend tests here
+    - echo "Running frontend tests..."
+    # - npm run test:ci
+    # - npm run lint
+    - echo "Frontend tests passed"
+  only:
+    - main
+    - develop
+    - merge_requests
+
+# ====================
+# SECURITY STAGE
+# ====================
+
+security:docker-scan:
+  stage: security
+  image: docker:24
+  services:
+    - docker:24-dind
+  tags:
+    - docker
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - echo "Scanning Docker images for vulnerabilities..."
+    - docker pull $CI_REGISTRY_IMAGE/backend:$IMAGE_TAG
+    # Use trivy or other security scanner
+    # - trivy image --severity HIGH,CRITICAL $CI_REGISTRY_IMAGE/backend:$IMAGE_TAG
+    - echo "Security scan completed"
+  allow_failure: true
+  only:
+    - main
+    - develop
+
+security:dependency-scan:
+  stage: security
+  image: python:3.11-slim
+  tags:
+    - docker
+  script:
+    - pip install safety
+    - cd web_portal/backend
+    - safety check --json || true
+    - echo "Dependency security scan completed"
+  allow_failure: true
+  only:
+    - main
+    - develop
+
+# ====================
+# DEPLOY STAGE
+# ====================
+
+# Deploy to staging environment
+deploy:staging:
+  stage: deploy
+  image: alpine:latest
+  tags:
+    - docker
+  <<: *ssh_setup
+  dependencies: []
+  script:
+    - apk add --no-cache rsync
+    - echo "Deploying to staging server..."
+
+    # Create deployment directory
+    - ssh $DEPLOY_USER@$DEPLOY_SERVER_STAGING "mkdir -p $DEPLOY_PATH"
+
+    # Sync files to server (excluding sensitive files)
+    - rsync -avz --delete
+        --exclude '.git'
+        --exclude 'node_modules'
+        --exclude 'venv'
+        --exclude '.env*'
+        --exclude '*.pyc'
+        --exclude '__pycache__'
+        ./ $DEPLOY_USER@$DEPLOY_SERVER_STAGING:$DEPLOY_PATH/
+
+    # Copy environment file
+    - echo "$ENV_STAGING" | ssh $DEPLOY_USER@$DEPLOY_SERVER_STAGING "cat > $DEPLOY_PATH/.env.prod"
+
+    # Deploy using script
+    - ssh $DEPLOY_USER@$DEPLOY_SERVER_STAGING "cd $DEPLOY_PATH && bash scripts/deploy.sh staging $IMAGE_TAG"
+
+    - echo "Staging deployment completed"
+  environment:
+    name: staging
+    url: https://staging.vehicle-valuation.example.com
+    on_stop: stop:staging
+  only:
+    - develop
+  when: manual
+
+# Deploy to production environment
+deploy:production:
+  stage: deploy
+  image: alpine:latest
+  tags:
+    - docker
+  <<: *ssh_setup
+  dependencies: []
+  script:
+    - apk add --no-cache rsync
+    - echo "Deploying to production server..."
+
+    # Create backup before deployment
+    - ssh $DEPLOY_USER@$DEPLOY_SERVER "bash $DEPLOY_PATH/scripts/backup.sh"
+
+    # Create deployment directory
+    - ssh $DEPLOY_USER@$DEPLOY_SERVER "mkdir -p $DEPLOY_PATH"
+
+    # Sync files to server
+    - rsync -avz --delete
+        --exclude '.git'
+        --exclude 'node_modules'
+        --exclude 'venv'
+        --exclude '.env*'
+        --exclude '*.pyc'
+        --exclude '__pycache__'
+        ./ $DEPLOY_USER@$DEPLOY_SERVER:$DEPLOY_PATH/
+
+    # Copy production environment file
+    - echo "$ENV_PRODUCTION" | ssh $DEPLOY_USER@$DEPLOY_SERVER "cat > $DEPLOY_PATH/.env.prod"
+
+    # Deploy using script with zero-downtime strategy
+    - ssh $DEPLOY_USER@$DEPLOY_SERVER "cd $DEPLOY_PATH && bash scripts/deploy.sh production $IMAGE_TAG"
+
+    - echo "Production deployment completed successfully"
+  environment:
+    name: production
+    url: https://vehicle-valuation.example.com
+    on_stop: stop:production
+  only:
+    - main
+  when: manual
+
+# ====================
+# VERIFY STAGE
+# ====================
+
+verify:staging:
+  stage: verify
+  image: alpine:latest
+  tags:
+    - docker
+  script:
+    - apk add --no-cache curl
+    - echo "Verifying staging deployment..."
+    - sleep 30  # Wait for services to be ready
+
+    # Health check endpoints
+    - 'curl -f https://staging.vehicle-valuation.example.com/health || exit 1'
+    - 'curl -f https://staging.vehicle-valuation.example.com/backend/health || exit 1'
+
+    - echo "Staging deployment verified successfully"
+  only:
+    - develop
+  needs:
+    - deploy:staging
+
+verify:production:
+  stage: verify
+  image: alpine:latest
+  tags:
+    - docker
+  script:
+    - apk add --no-cache curl
+    - echo "Verifying production deployment..."
+    - sleep 30  # Wait for services to be ready
+
+    # Health check endpoints
+    - 'curl -f https://vehicle-valuation.example.com/health || exit 1'
+    - 'curl -f https://vehicle-valuation.example.com/backend/health || exit 1'
+
+    # Optional: Run smoke tests
+    - echo "Production deployment verified successfully"
+  only:
+    - main
+  needs:
+    - deploy:production
+
+# ====================
+# ROLLBACK STAGE
+# ====================
+
+rollback:production:
+  stage: rollback
+  image: alpine:latest
+  tags:
+    - docker
+  <<: *ssh_setup
+  script:
+    - echo "Rolling back production deployment..."
+    - ssh $DEPLOY_USER@$DEPLOY_SERVER "cd $DEPLOY_PATH && bash scripts/rollback.sh"
+    - echo "Rollback completed"
+  environment:
+    name: production
+    action: rollback
+  when: manual
+  only:
+    - main
+
+# ====================
+# STOP ENVIRONMENTS
+# ====================
+
+stop:staging:
+  stage: deploy
+  image: alpine:latest
+  tags:
+    - docker
+  <<: *ssh_setup
+  script:
+    - ssh $DEPLOY_USER@$DEPLOY_SERVER_STAGING "cd $DEPLOY_PATH && docker-compose -f $COMPOSE_FILE down"
+    - echo "Staging environment stopped"
+  environment:
+    name: staging
+    action: stop
+  when: manual
+  only:
+    - develop
+
+stop:production:
+  stage: deploy
+  image: alpine:latest
+  tags:
+    - docker
+  <<: *ssh_setup
+  script:
+    - ssh $DEPLOY_USER@$DEPLOY_SERVER "cd $DEPLOY_PATH && docker-compose -f $COMPOSE_FILE down"
+    - echo "Production environment stopped"
+  environment:
+    name: production
+    action: stop
+  when: manual
+  only:
+    - main

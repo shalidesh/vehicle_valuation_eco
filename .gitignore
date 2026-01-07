@@ -1,0 +1,127 @@
+# Data processing
+data_processing
+
+# Python virtual environments
+api_uat/venv
+web_portal/backend/venv
+venv/
+env/
+ENV/
+*.pyc
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment files (never commit real credentials)
+.env
+.env.local
+.env.*.local
+.env.prod
+.env.staging
+.env.development
+api_uat/.env
+web_portal/backend/.env
+
+# Keep example files
+!.env*.example
+!.env.example
+
+# Node.js
+web_portal/frontend/node_modules
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.yarn-integrity
+
+# Next.js
+web_portal/frontend/.next/
+web_portal/frontend/out/
+.next/
+out/
+.vercel
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+*.log.*
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# Docker
+*.tar
+*.tar.gz
+
+# Backup files
+backups/
+*.backup
+*.bak
+.last_backup
+
+# Test coverage
+coverage/
+*.coverage
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+*.egg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Secrets and keys
+*.pem
+*.key
+*.crt
+*.p12
+id_rsa*
+*.pub
+.ssh/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# CI/CD
+.gitlab-ci-local/
+
+# Lock files (optional - some teams commit these)
+# package-lock.json
+# yarn.lock
+# poetry.lock
+
+
+CICD_README.md
+DEPLOYMENT_QUICKSTART.md
+GITLAB_CICD_SETUP.md
+
+api_uat/venv
+trash
+
+web_portal/backend/venv
+web_portal/frontend/node_modules
+
+Portal Other Models.xlsx

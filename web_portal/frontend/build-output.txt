@@ -1,0 +1,31 @@
+
+> frontend@0.1.0 build
+> next build
+
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+   ▲ Next.js 16.0.1 (Turbopack)
+   - Environments: .env.local
+
+   Creating an optimized production build ...
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+ ✓ Compiled successfully in 4.1s
+   Running TypeScript ...
+Failed to compile.
+
+./app/dashboard/vehicles/fast-moving/page.tsx:453:9
+Type error: Type '(data: FastMovingVehicleCreate) => Promise<void>' is not assignable to type '(data: FastMovingVehicleCreate | FastMovingVehicleUpdate) => Promise<void>'.
+  Types of parameters 'data' and 'data' are incompatible.
+    Type 'FastMovingVehicleCreate | FastMovingVehicleUpdate' is not assignable to type 'FastMovingVehicleCreate'.
+      Type 'FastMovingVehicleUpdate' is not assignable to type 'FastMovingVehicleCreate'.
+        Types of property 'type' are incompatible.
+          Type 'string | undefined' is not assignable to type 'string'.
+            Type 'undefined' is not assignable to type 'string'.
+
+[0m [90m 451 |[39m         isOpen[33m=[39m{isFormOpen}
+ [90m 452 |[39m         onClose[33m=[39m{() [33m=>[39m setIsFormOpen([36mfalse[39m)}
+[31m[1m>[22m[39m[90m 453 |[39m         onSubmit[33m=[39m{formMode [33m===[39m [32m'create'[39m [33m?[39m handleCreate [33m:[39m handleUpdate}
+ [90m     |[39m         [31m[1m^[22m[39m
+ [90m 454 |[39m         vehicle[33m=[39m{selectedVehicle}
+ [90m 455 |[39m         mode[33m=[39m{formMode}
+ [90m 456 |[39m       [33m/[39m[33m>[39m[0m
+Next.js build worker exited with code: 1 and signal: null

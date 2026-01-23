@@ -758,7 +758,7 @@ export default function AnalyticsPage() {
             </div>
             <div className="bg-white rounded-lg shadow p-4">
               <p className="text-sm text-gray-600 mb-1">
-                {priceData.manufacturer === 'Fast Moving Vehicle Index' ? 'Index Trend' : 'Price Trend'}
+                {priceData.manufacturer === 'Fast Moving Vehicle Index' ? 'Index Trend (3 months)' : 'Price Trend (3 months)'}
               </p>
               <div className="flex items-center gap-2">
                 {getTrendIcon(priceData.trend)}

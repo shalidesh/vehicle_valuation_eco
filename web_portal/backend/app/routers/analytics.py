@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from ..database import get_db
 from ..models.user import User
 from ..models.vehicle import FastMovingVehicle, ScrapedVehicle
@@ -61,7 +61,11 @@ async def get_dashboard_stats(
     """Get dashboard statistics."""
     from ..models.user import User as UserModel
 
-    total_fast_moving = db.query(func.count(FastMovingVehicle.id)).scalar()
+    # Count unique models (distinct manufacturer-model combinations)
+    total_fast_moving = db.query(
+        FastMovingVehicle.manufacturer,
+        FastMovingVehicle.model
+    ).distinct().count()
     total_scraped = db.query(func.count(ScrapedVehicle.id)).scalar()
     total_mappings = db.query(func.count(ERPModelMapping.id)).scalar()
     total_users = db.query(func.count(UserModel.id)).scalar()
@@ -152,18 +156,23 @@ async def get_price_movement(
     min_price = min(prices)
     max_price = max(prices)
 
-    # Determine trend
+    # Determine trend: compare 3 points (months) before price vs recent point price
+    # Each point represents a monthly average, so we compare the most recent point
+    # with the point from 3 positions before
     trend = "stable"
-    if len(prices) >= 2:
-        first_half = prices[: len(prices) // 2]
-        second_half = prices[len(prices) // 2 :]
-        avg_first = sum(first_half) / len(first_half)
-        avg_second = sum(second_half) / len(second_half)
 
-        if avg_second > avg_first * 1.05:  # 5% increase
-            trend = "increasing"
-        elif avg_second < avg_first * 0.95:  # 5% decrease
+    if len(price_history) >= 4:
+        # Get the most recent price point (last item)
+        recent_price = price_history[-1]["price"]
+
+        # Get the price from 3 points before (4th from the end)
+        three_points_before_price = price_history[-4]["price"]
+
+        # If the price 3 months ago is greater than recent price, it's decreasing
+        if three_points_before_price > recent_price:
             trend = "decreasing"
+        else:
+            trend = "increasing"
 
     return {
         "manufacturer": manufacturer,
@@ -263,18 +272,23 @@ async def get_fast_moving_index(
         min_price = min(prices)
         max_price = max(prices)
 
-        # Determine trend
+        # Determine trend: compare 3 points (months) before price vs recent point price
+        # Each point represents a monthly average, so we compare the most recent point
+        # with the point from 3 positions before
         trend = "stable"
-        if len(prices) >= 2:
-            first_half = prices[: len(prices) // 2]
-            second_half = prices[len(prices) // 2 :]
-            avg_first = sum(first_half) / len(first_half)
-            avg_second = sum(second_half) / len(second_half)
 
-            if avg_second > avg_first * 1.05:
-                trend = "increasing"
-            elif avg_second < avg_first * 0.95:
+        if len(price_history) >= 4:
+            # Get the most recent price point (last item)
+            recent_price = price_history[-1]["price"]
+
+            # Get the price from 3 points before (4th from the end)
+            three_points_before_price = price_history[-4]["price"]
+
+            # If the price 3 months ago is greater than recent price, it's decreasing
+            if three_points_before_price > recent_price:
                 trend = "decreasing"
+            else:
+                trend = "increasing"
 
         return {
             "manufacturer": "Fast Moving Vehicle Index",

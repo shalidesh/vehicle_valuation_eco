@@ -79,6 +79,7 @@ def load_erp_model_mapping(engine, csv_path):
         print(f"  Warning: Found {duplicates_count} duplicate records, removing duplicates...")
         df_to_load = df_to_load.drop_duplicates(subset=['manufacturer', 'erp_name'], keep='first')
 
+    # Pass engine directly to to_sql for pandas compatibility
     df_to_load.to_sql('erp_model_mapping', engine, if_exists='append', index=False, method='multi', chunksize=1000)
 
     print(f"  ✓ Loaded {len(df_to_load)} unique records into erp_model_mapping")
@@ -99,6 +100,7 @@ def load_fast_moving_vehicles(engine, csv_path):
 
     # Prepare data - convert date to datetime
     df_to_load = df[['type', 'manufacturer', 'model', 'yom', 'price', 'date']].copy()
+    df_to_load = df_to_load.drop_duplicates(subset=["type","manufacturer","model","yom","date"])
 
     # Clean up leading/trailing spaces from string columns
     string_columns = ['type', 'manufacturer', 'model']
@@ -107,6 +109,8 @@ def load_fast_moving_vehicles(engine, csv_path):
             df_to_load[col] = df_to_load[col].astype(str).str.strip()
 
     df_to_load['date'] = pd.to_datetime(df_to_load['date'])
+
+    # Pass engine directly to to_sql for pandas compatibility
     df_to_load.to_sql('fast_moving_vehicles', engine, if_exists='append', index=False, method='multi', chunksize=1000)
 
     print(f"  ✓ Loaded {len(df_to_load)} records into fast_moving_vehicles")
@@ -141,6 +145,8 @@ def load_scraped_vehicles(engine, csv_path):
 
     # Clean up data
     df_to_load['mileage'] = df_to_load['mileage'].fillna(0).astype(int)
+
+    # Pass engine directly to to_sql for pandas compatibility
     df_to_load.to_sql('scraped_vehicles', engine, if_exists='append', index=False, method='multi', chunksize=1000)
 
     print(f"  ✓ Loaded {len(df_to_load)} records into scraped_vehicles")
@@ -276,7 +282,7 @@ def load_csv_data(database_url):
 
     csv_files = {
         'erp_model_mapping': base_path / 'model_mapped.csv',
-        'fast_moving_vehicles': base_path / 'fast_moving_vehicles.csv',
+        'fast_moving_vehicles': base_path / 'vehicle_fast_moving_update.csv',
         'scraped_vehicles': base_path / 'master_table_scraped.csv'
     }
     print(f"CSV file paths: {csv_files}")

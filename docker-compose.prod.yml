@@ -9,7 +9,7 @@ x-airflow-common:
     &airflow-common-env
     # need parallel DAG execution -> LocalExecutor
     AIRFLOW__CORE__EXECUTOR: LocalExecutor 
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@postgres/${AIRFLOW_DB_NAME:-airflow_db}
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres/${AIRFLOW_DB_NAME:-airflow_db}
     AIRFLOW__CORE__FERNET_KEY: ''
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
@@ -28,6 +28,13 @@ x-airflow-common:
     AIRFLOW__CORE__PARALLELISM: 4
     AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: 2
     AIRFLOW__SCHEDULER__MAX_TIS_PER_QUERY: 8
+    # App database connection for DAG tasks (scraping data goes here)
+    APP_DB_HOST: postgres
+    APP_DB_PORT: 5432
+    APP_DB_NAME: ${APP_DB_NAME:-cdb_valuation_db}
+    APP_DB_USER: ${POSTGRES_USER:-airflow}
+    APP_DB_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
+    FLARESOLVERR_URL: http://flaresolverr:8191/v1
 
   volumes:
     - ./airflow/dags:/opt/airflow/dags
@@ -185,17 +192,19 @@ services:
     container_name: cdb_postgres
     restart: always
     environment:
-      POSTGRES_USER: ${AIRFLOW_DB_USER:-airflow}
-      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD:-airflow}
+      POSTGRES_USER: ${POSTGRES_USER:-airflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
       POSTGRES_DB: ${AIRFLOW_DB_NAME:-airflow_db}
+      APP_DB_NAME: ${APP_DB_NAME:-cdb_valuation_db}
       POSTGRES_SHARED_BUFFERS: 256MB
       POSTGRES_WORK_MEM: 16MB
       POSTGRES_MAINTENANCE_WORK_MEM: 64MB
     mem_limit: 1.5g
     volumes:
       - postgres_data:/var/lib/postgresql/data:rw
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${AIRFLOW_DB_USER:-airflow} -d ${AIRFLOW_DB_NAME:-airflow_db}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-airflow} -d ${AIRFLOW_DB_NAME:-airflow_db}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -218,6 +227,17 @@ services:
   #   networks:
   #     - app_network
 
+#-------------------Scraped Data Service--------------------
+
+  flaresolverr: 
+    image: 21hsmw/flaresolverr:nodriver 
+    container_name: flaresolverr 
+    ports: 
+      - "8191:8191" 
+    restart: unless-stopped
+    networks:
+      - app_network
+
 # -------------------- Migration Service --------------------
   db_migrations:
     build:
@@ -225,7 +245,8 @@ services:
       dockerfile: Dockerfile.migrations
     container_name: cdb_migrations
     environment:
-      - DATABASE_URL=postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@postgres:5432/${AIRFLOW_DB_NAME:-airflow_db}
+      - DATABASE_URL=postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres:5432/${APP_DB_NAME:-cdb_valuation_db}
+      - SECRET_KEY=${BACKEND_SECRET_KEY:-6619d0f5a1b0980135bb15788ee4101ae886a5508144d2b2a5342232c39b7495892f6a0539dee3d0445593d1ce9ebbdec7e2687fcf6c5a3a5f651af6c0a4919e}
     depends_on:
       postgres:
         condition: service_healthy
@@ -241,13 +262,13 @@ services:
     container_name: cdb_backend
     restart: always
     environment:
-      - DATABASE_URL=postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@postgres:5432/${AIRFLOW_DB_NAME:-airflow_db}
+      - DATABASE_URL=postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres:5432/${APP_DB_NAME:-cdb_valuation_db}
       - SECRET_KEY=${BACKEND_SECRET_KEY:-6619d0f5a1b0980135bb15788ee4101ae886a5508144d2b2a5342232c39b7495892f6a0539dee3d0445593d1ce9ebbdec7e2687fcf6c5a3a5f651af6c0a4919e}
       - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
       - REFRESH_TOKEN_EXPIRE_DAYS=${REFRESH_TOKEN_EXPIRE_DAYS:-7}
-      - DB_USER=${AIRFLOW_DB_USER:-airflow}
-      - DB_PASSWORD=${AIRFLOW_DB_PASSWORD:-airflow}
-      - DB_NAME=${AIRFLOW_DB_NAME:-airflow_db}
+      - DB_USER=${POSTGRES_USER:-airflow}
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-airflow}
+      - DB_NAME=${APP_DB_NAME:-cdb_valuation_db}
       - DB_HOST=postgres
       - DB_PORT=5432
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost,http://localhost:3000}
@@ -275,7 +296,7 @@ services:
     container_name: cdb_valuation_engine
     restart: always
     environment:
-      - DATABASE_URL=postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@postgres:5432/${AIRFLOW_DB_NAME:-airflow_db}
+      - DATABASE_URL=postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres:5432/${APP_DB_NAME:-cdb_valuation_db}
       - SECRET_KEY=${VALUATION_SECRET_KEY:-thisismynewversionscreatversion}
       - AUTH_USERNAME=${VALUATION_USER:-cdb}
       - AUTH_PASSWORD=${VALUATION_PASSWORD:-cdb123456}

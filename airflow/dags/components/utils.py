@@ -1,97 +1,249 @@
+"""
+Utility functions for database operations and email notifications.
+"""
+
 import psycopg2
-import os
+from psycopg2 import sql
+from contextlib import contextmanager
+from typing import Dict, List, Optional, Any
 import pandas as pd
-from datetime import datetime
 from airflow.utils.email import send_email
-# from dotenv import load_dotenv
-# load_dotenv()
 
-# host = os.getenv("HOST")
-# port = os.getenv("PORT")
-# database = os.getenv("DATABASE")
-# user = os.getenv("USER")
-# password = os.getenv("PASSWORD")
+from components.logging_config import get_logger
+from components.config import db_config, email_config
 
-host = "postgres"
-port = "5432"  
-database = "airflow_db"
-user= "airflow"
-password= "airflow"
+logger = get_logger(__name__)
 
 
-def check_table(table_name):
-    with psycopg2.connect(host=host, port=port, database=database, user=user, password=password) as conn:
+@contextmanager
+def get_db_connection():
+    """
+    Context manager for database connections.
+    Ensures proper connection handling and cleanup.
+
+    Yields:
+        psycopg2.connection: Database connection object
+    """
+    conn = None
+    try:
+        conn = psycopg2.connect(
+            host=db_config.host,
+            port=db_config.port,
+            database=db_config.database,
+            user=db_config.user,
+            password=db_config.password
+        )
+        yield conn
+    except psycopg2.Error as e:
+        logger.error(f"Database connection error: {e}")
+        raise
+    finally:
+        if conn:
+            conn.close()
+
+
+def check_table(table_name: str) -> bool:
+    """
+    Check if a table exists and clear its contents if it does.
+
+    Args:
+        table_name: Name of the table to check
+
+    Returns:
+        bool: True if table existed and was cleared, False otherwise
+    """
+    with get_db_connection() as conn:
         with conn.cursor() as cur:
-            # Check if table exists
-            cur.execute(f"select * from information_schema.tables where table_name='{table_name}'")
-            if bool(cur.rowcount):
-                # If table exists, delete all records
-                cur.execute(f"delete from {table_name}")
+            cur.execute(
+                "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name = %s)",
+                (table_name,)
+            )
+            exists = cur.fetchone()[0]
 
-def read_table(table_name):
-    with psycopg2.connect(host=host, port=port, database=database, user=user, password=password) as conn:
+            if exists:
+                cur.execute(sql.SQL("DELETE FROM {}").format(sql.Identifier(table_name)))
+                conn.commit()
+                logger.info(f"Cleared existing table: {table_name}")
+                return True
+
+    return False
+
+
+def read_table(table_name: str) -> Optional[pd.DataFrame]:
+    """
+    Read all records from a table into a DataFrame.
+
+    Args:
+        table_name: Name of the table to read
+
+    Returns:
+        Optional[pd.DataFrame]: DataFrame with table contents or None if table doesn't exist
+    """
+    with get_db_connection() as conn:
         with conn.cursor() as cur:
-            # Check if the table exists
-            cur.execute(f"SELECT * FROM information_schema.tables WHERE table_name='{table_name}'")
-            if cur.rowcount > 0:
-                # Fetch the records from the table
-                cur.execute(f"SELECT * FROM {table_name}")
-                rows = cur.fetchall()
-                
-                # Get column names
-                col_names = [desc[0] for desc in cur.description]
-                
-                # Convert to a DataFrame
-                df = pd.DataFrame(rows, columns=col_names)
-                
-                return df 
-    return None
-                
+            cur.execute(
+                "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name = %s)",
+                (table_name,)
+            )
+            if not cur.fetchone()[0]:
+                logger.warning(f"Table '{table_name}' does not exist")
+                return None
 
-# Establish db connection and create table
-def create_table(table_name, columns):
-    with psycopg2.connect(host=host, port=port, database=database, user=user, password=password) as conn:
+            cur.execute(sql.SQL("SELECT * FROM {}").format(sql.Identifier(table_name)))
+            rows = cur.fetchall()
+            col_names = [desc[0] for desc in cur.description]
+
+            df = pd.DataFrame(rows, columns=col_names)
+            logger.info(f"Read {len(df)} records from table: {table_name}")
+            return df
+
+
+def create_table(table_name: str, columns: List[str]) -> None:
+    """
+    Create a table if it doesn't exist. Clears existing data if table exists.
+
+    Args:
+        table_name: Name of the table to create
+        columns: List of column definitions (e.g., ["id INT", "name VARCHAR(255)"])
+    """
+    check_table(table_name)
+
+    with get_db_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(f"""
-                create table if not exists {table_name}(
-                {','.join(columns)})""")
-            
+            try:
+                create_sql = sql.SQL("CREATE TABLE IF NOT EXISTS {} ({})").format(
+                    sql.Identifier(table_name),
+                    sql.SQL(', '.join(columns))
+                )
+                cur.execute(create_sql)
+                conn.commit()
+                logger.info(f"Created/verified table: {table_name}")
 
-# Insert data into db
-def populate_table(table_name, data):
-    with psycopg2.connect(host=host, port=port, database=database, user=user, password=password) as conn:
+            except psycopg2.errors.UniqueViolation:
+                conn.rollback()
+                cur.execute(
+                    sql.SQL("DROP TYPE IF EXISTS {} CASCADE").format(sql.Identifier(table_name))
+                )
+                create_sql = sql.SQL("CREATE TABLE {} ({})").format(
+                    sql.Identifier(table_name),
+                    sql.SQL(', '.join(columns))
+                )
+                cur.execute(create_sql)
+                conn.commit()
+                logger.info(f"Recreated table after type conflict: {table_name}")
+
+
+def populate_table(table_name: str, data: Dict[str, Any]) -> None:
+    """
+    Insert a single row into a table.
+
+    Args:
+        table_name: Name of the target table
+        data: Dictionary mapping column names to values
+    """
+    with get_db_connection() as conn:
         with conn.cursor() as cur:
-            # Extract columns and values from the dictionary
-            columns = ", ".join(data.keys())
-            values_placeholder = ", ".join(["%s"] * len(data))
-            query = f"INSERT INTO {table_name} ({columns}) VALUES ({values_placeholder})"
-            
-            # Execute the query with the dictionary values
-            cur.execute(query, tuple(data.values()))
+            columns = list(data.keys())
+            values = list(data.values())
 
-            # Commit the transaction
+            insert_sql = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
+                sql.Identifier(table_name),
+                sql.SQL(', ').join(map(sql.Identifier, columns)),
+                sql.SQL(', ').join(sql.Placeholder() * len(values))
+            )
+
+            cur.execute(insert_sql, values)
             conn.commit()
 
 
+def bulk_insert(table_name: str, df: pd.DataFrame, batch_size: int = 1000) -> int:
+    """
+    Bulk insert DataFrame records into a table.
 
-def success_email(context):
+    Args:
+        table_name: Name of the target table
+        df: DataFrame with data to insert
+        batch_size: Number of records to insert per batch
+
+    Returns:
+        int: Number of records inserted
+    """
+    if df.empty:
+        logger.warning(f"No data to insert into {table_name}")
+        return 0
+
+    total_inserted = 0
+    columns = list(df.columns)
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            insert_sql = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
+                sql.Identifier(table_name),
+                sql.SQL(', ').join(map(sql.Identifier, columns)),
+                sql.SQL(', ').join(sql.Placeholder() * len(columns))
+            )
+
+            for i in range(0, len(df), batch_size):
+                batch = df.iloc[i:i + batch_size]
+                records = [tuple(row) for row in batch.values]
+
+                cur.executemany(insert_sql, records)
+                conn.commit()
+                total_inserted += len(records)
+
+                logger.debug(f"Inserted batch {i // batch_size + 1}: {len(records)} records")
+
+    logger.info(f"Bulk inserted {total_inserted} records into {table_name}")
+    return total_inserted
+
+
+def success_email(context: Dict[str, Any]) -> None:
+    """
+    Send success notification email.
+
+    Args:
+        context: Airflow task context dictionary
+    """
     task_instance = context['task_instance']
-    task_status = 'Success' 
-    subject = f'Airflow Task {task_instance.task_id} {task_status}'
-    body = f'The task {task_instance.task_id} completed with status : {task_status}. \n\n'\
-        f'The task execution date is: {context["execution_date"]}\n'\
-        f'Log url: {task_instance.log_url}\n\n'
-    to_email = 'deshanariyarathna@gmail.com' #recepient mail
-    send_email(to = to_email, subject = subject, html_content = body)
+    dag_id = context['dag'].dag_id
 
-def failure_email(context):
+    subject = f"[SUCCESS] Airflow Task: {dag_id}.{task_instance.task_id}"
+    body = f"""
+    <h3>Task Completed Successfully</h3>
+    <table>
+        <tr><td><b>DAG:</b></td><td>{dag_id}</td></tr>
+        <tr><td><b>Task:</b></td><td>{task_instance.task_id}</td></tr>
+        <tr><td><b>Execution Date:</b></td><td>{context['execution_date']}</td></tr>
+        <tr><td><b>Log URL:</b></td><td><a href="{task_instance.log_url}">{task_instance.log_url}</a></td></tr>
+    </table>
+    """
+
+    send_email(to=email_config.recipient, subject=subject, html_content=body)
+    logger.info(f"Success email sent for task: {task_instance.task_id}")
+
+
+def failure_email(context: Dict[str, Any]) -> None:
+    """
+    Send failure notification email.
+
+    Args:
+        context: Airflow task context dictionary
+    """
     task_instance = context['task_instance']
-    task_status = 'Failed'
-    subject = f'Airflow Task {task_instance.task_id} {task_status}'
-    body = f'The task {task_instance.task_id} completed with status : {task_status}. \n\n'\
-        f'The task execution date is: {context["execution_date"]}\n'\
-        f'Log url: {task_instance.log_url}\n\n'
-    to_email = 'deshanariyarathna@gmail.com' #recepient mail
-    send_email(to = to_email, subject = subject, html_content = body)
+    dag_id = context['dag'].dag_id
+    exception = context.get('exception', 'Unknown error')
 
-                    
+    subject = f"[FAILED] Airflow Task: {dag_id}.{task_instance.task_id}"
+    body = f"""
+    <h3 style="color: red;">Task Failed</h3>
+    <table>
+        <tr><td><b>DAG:</b></td><td>{dag_id}</td></tr>
+        <tr><td><b>Task:</b></td><td>{task_instance.task_id}</td></tr>
+        <tr><td><b>Execution Date:</b></td><td>{context['execution_date']}</td></tr>
+        <tr><td><b>Error:</b></td><td>{exception}</td></tr>
+        <tr><td><b>Log URL:</b></td><td><a href="{task_instance.log_url}">{task_instance.log_url}</a></td></tr>
+    </table>
+    """
+
+    send_email(to=email_config.recipient, subject=subject, html_content=body)
+    logger.error(f"Failure email sent for task: {task_instance.task_id}")

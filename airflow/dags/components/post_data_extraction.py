@@ -1,261 +1,296 @@
-import psycopg2
-from datetime import datetime, timedelta
-import requests
-from bs4 import BeautifulSoup
-import pandas as pd
-from tqdm import tqdm 
+"""
+Post data extraction module for scraping vehicle details from listing pages.
+Supports Ikman.lk and Riyasewana.com websites.
+"""
+
 import time
-import re
-from pandas import DataFrame
-from components.utils import create_table, populate_table,read_table
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
 import random
-import csv
-import os
+import re
+from typing import Dict, Optional, Any
 
-# Set up Selenium with pre-installed ChromeDriver
-def setup_chrome_driver():
-    """Setup Chrome WebDriver using pre-installed ChromeDriver"""
-    options = webdriver.ChromeOptions()
-    options.add_argument('--headless')  # Run headless for no UI
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--disable-gpu')
-    options.add_argument('--window-size=1920,1080')
-    options.add_argument('--disable-extensions')
-    options.add_argument('--disable-plugins')
-    options.add_argument('--disable-images')
-    options.add_argument('--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
-    
-    # Use the pre-installed ChromeDriver path from environment or default
-    chromedriver_path = os.environ.get('CHROMEDRIVER_PATH', '/usr/bin/chromedriver')
-    chrome_bin = os.environ.get('CHROME_BIN', '/usr/bin/google-chrome')
-    
-    # Set Chrome binary location
-    options.binary_location = chrome_bin
-    
-    # Create service with the pre-installed ChromeDriver
-    service = Service(executable_path=chromedriver_path)
-    
-    try:
-        driver = webdriver.Chrome(service=service, options=options)
-        print("Chrome driver setup successful")
-        return driver
-    except Exception as e:
-        print(f"Error setting up Chrome driver: {e}")
-        # Fallback: try without specifying explicit paths
-        try:
-            options = webdriver.ChromeOptions()
-            options.add_argument('--headless')
-            options.add_argument('--no-sandbox')
-            options.add_argument('--disable-dev-shm-usage')
-            driver = webdriver.Chrome(options=options)
-            print("Chrome driver setup successful with fallback")
-            return driver
-        except Exception as e2:
-            print(f"Fallback also failed: {e2}")
-            raise e2
+import requests
+import pandas as pd
+from bs4 import BeautifulSoup
 
-# Initialize driver globally
-driver = setup_chrome_driver()
+from components.logging_config import get_logger, TaskLogger
+from components.config import (
+    ikman_config,
+    riyasewana_config,
+    scraper_config,
+    TABLE_SCHEMAS
+)
+from components.utils import create_table, populate_table, read_table
+from components.post_links_extraction import FlareSolverrClient
+
+logger = get_logger(__name__)
+
+# =============================================================================
+# TESTING CONFIGURATION - Comment out or set to None for production
+# =============================================================================
+TEST_LINK_LIMIT = 50  # Set to None to process all links
+# =============================================================================
+
+# Key mapping for Ikman data normalization
+IKMAN_KEY_MAPPING = {
+    "Post_Link": "post_link",
+    "Posted_Title": "posted_title",
+    "Posted_Date": "posted_date",
+    "Brand": "make",
+    "Model": "model",
+    "Grade": "grade",
+    "Trim / Edition": "trim_edition",
+    "Year of Manufacture": "yom",
+    "Condition": "condition",
+    "Transmission": "transmission",
+    "Body type": "body_type",
+    "Fuel type": "fuel_type",
+    "Engine capacity": "engine_capacity",
+    "Mileage": "mileage",
+    "Vehicle_Price": "vehicle_price"
+}
 
 
-def scarpe_and_save_ikman(source_table,data_table):
+def _create_empty_ikman_record() -> Dict[str, str]:
+    """Create an empty Ikman vehicle record with default values."""
+    return {
+        "Post_Link": "0",
+        "Posted_Title": "0",
+        "Posted_Date": "0",
+        "Brand": "0",
+        "Model": "0",
+        "Grade": "0",
+        "Trim / Edition": "0",
+        "Year of Manufacture": "0",
+        "Condition": "0",
+        "Transmission": "0",
+        "Body type": "0",
+        "Fuel type": "0",
+        "Engine capacity": "0",
+        "Mileage": "0",
+        "Vehicle_Price": "0"
+    }
 
-    df=read_table(source_table)
-    create_table(data_table, [
-                "post_link VARCHAR(255)",
-                "posted_title VARCHAR(255)",
-                "posted_date VARCHAR(255)",
-                "make VARCHAR(255)",
-                "model VARCHAR(255)",
-                "grade VARCHAR(255)",
-                "trim_edition VARCHAR(255)",
-                "yom VARCHAR(255)",
-                "condition VARCHAR(255)",
-                "transmission VARCHAR(255)",
-                "body_type VARCHAR(255)",
-                "fuel_type VARCHAR(255)",
-                "engine_capacity VARCHAR(255)",
-                "mileage VARCHAR(255)",
-                "vehicle_price VARCHAR(255)"
-    ])     
 
-    # Iterate over the links
-    for link in tqdm(df['link']):
-        
-        car_info = {
-            "Post_Link": "0",
-            "Posted_Title": "0",
-            "Posted_Date": "0",
-            "Brand": "0",
-            "Model": "0",
-            "Grade": "0",
-            "Trim / Edition": "0",
-            "Year of Manufacture": "0",
-            "Condition": "0",
-            "Transmission": "0",
-            "Body type": "0",
-            "Fuel type": "0",
-            "Engine capacity": "0",
-            "Mileage": "0",
-            "Vehicle_Price": "0"
+def _parse_ikman_page(soup: BeautifulSoup, link: str) -> Dict[str, str]:
+    """
+    Parse an Ikman vehicle detail page.
+
+    Args:
+        soup: BeautifulSoup object of the page
+        link: URL of the page
+
+    Returns:
+        Dict containing vehicle information
+    """
+    car_info = _create_empty_ikman_record()
+    car_info['Post_Link'] = link
+
+    # Extract header and title
+    header = soup.find("div", class_='title-wrapper--1lwSc')
+    if header:
+        title_elem = header.find('h1')
+        if title_elem:
+            car_info['Posted_Title'] = title_elem.get_text()
+
+        date_elem = header.find("div", class_='subtitle-wrapper--1M5Mv')
+        if date_elem:
+            car_info['Posted_Date'] = re.sub('<[^<]+?>', '', str(date_elem))
+
+    # Extract vehicle price
+    price_elem = soup.find("div", class_='amount--3NTpl')
+    if price_elem:
+        car_info['Vehicle_Price'] = price_elem.get_text()
+
+    # Extract vehicle details
+    details_section = soup.find("div", class_='ad-meta--17Bqm')
+    if details_section:
+        detail_rows = details_section.find_all("div", class_='full-width--XovDn')
+        for row in detail_rows:
+            label_elem = row.find('div', class_='word-break--2nyVq label--3oVZK')
+            value_elem = row.find('div', class_='word-break--2nyVq value--1lKHt')
+
+            if label_elem and value_elem:
+                label = label_elem.get_text().strip("' :")
+                value = value_elem.get_text()
+                car_info[label] = value
+
+    # Normalize keys
+    return {IKMAN_KEY_MAPPING.get(k, k): v for k, v in car_info.items()}
+
+
+def scrape_and_save_ikman(source_table: str, data_table: str, **kwargs) -> int:
+    """
+    Scrape vehicle details from Ikman.lk listing pages.
+
+    Args:
+        source_table: Table containing listing links
+        data_table: Table to store scraped data
+
+    Returns:
+        int: Number of records scraped
+    """
+    with TaskLogger(logger, "scrape_and_save_ikman"):
+        df = read_table(source_table)
+        if df is None or df.empty:
+            logger.warning(f"No links found in {source_table}")
+            return 0
+
+        # Apply test limit if configured
+        if TEST_LINK_LIMIT is not None:
+            df = df.head(TEST_LINK_LIMIT)
+            logger.info(f"TEST MODE: Limited to {TEST_LINK_LIMIT} links")
+
+        create_table(data_table, TABLE_SCHEMAS['ikman_data'])
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; VehicleDataBot/1.0)",
+            "From": "scraper@example.com"
         }
 
-        try:
-            headers = {
-                "User-Agent": "web-scrapping",
-                "From": "youremail@example.com"
-            }
+        total_records = 0
+        total_links = len(df)
 
-            car_info['Post_Link'] = link
-            response = requests.get(link, headers=headers)
-            soup = BeautifulSoup(response.text, 'html.parser')
+        for idx, link in enumerate(df['link'], 1):
+            if idx % 100 == 0:
+                logger.info(f"Processing link {idx}/{total_links}")
 
-            # Extract the header and title
-            header = soup.find("div", class_='title-wrapper--1lwSc')
-            posted_title_name = header.find('h1').get_text() if header and header.find('h1') else ""
-            car_info['Posted_Title'] = posted_title_name
+            try:
+                response = requests.get(link, headers=headers, timeout=15)
+                soup = BeautifulSoup(response.text, 'html.parser')
 
-            posted_date = header.find("div", class_='subtitle-wrapper--1M5Mv') if header else None
-            posted_date_str = re.sub('<[^<]+?>', '', str(posted_date)) if posted_date else ""
-            car_info['Posted_Date'] = posted_date_str
+                car_info = _parse_ikman_page(soup, link)
+                populate_table(data_table, car_info)
+                total_records += 1
 
-            # Extract the vehicle price
-            vehicle_price = soup.find("div", class_='amount--3NTpl')
-            price = vehicle_price.get_text() if vehicle_price else ""
-            car_info['Vehicle_Price'] = price
+                time.sleep(0.25)
 
-            # Extract vehicle details
-            vehicle_details = soup.find("div", class_='ad-meta--17Bqm')
-            vehicle_details_table_rows = vehicle_details.find_all("div", class_='full-width--XovDn') if vehicle_details else []
+            except requests.RequestException as e:
+                logger.warning(f"Request error for {link}: {e}")
+                time.sleep(2)
+            except Exception as e:
+                logger.error(f"Error processing {link}: {e}")
 
-            for row in vehicle_details_table_rows:
-                tag = row.find('div', class_='word-break--2nyVq label--3oVZK')
-                label = tag.get_text() if tag else ""
-                tag1 = row.find('div', class_='word-break--2nyVq value--1lKHt')
-                value = tag1.get_text() if tag1 else ""
-                car_info[label.strip("' :")] = value
+        logger.info(f"Completed Ikman data extraction. Total records: {total_records}")
+        return total_records
 
-            # Mapping old key names to new ones
-            key_mapping = {
-                "Post_Link": "post_link",
-                "Posted_Title": "posted_title",
-                "Posted_Date": "posted_date",
-                "Brand": "make",
-                "Model": "model",
-                "Grade": "grade",
-                "Trim / Edition": "trim_edition",
-                "Year of Manufacture": "yom",
-                "Condition": "condition",
-                "Transmission": "transmission",
-                "Body type": "body_type",
-                "Fuel type": "fuel_type",
-                "Engine capacity": "engine_capacity",
-                "Mileage": "mileage",
-                "Vehicle_Price": "price"
-            }
 
-            # Create a new dictionary with updated keys
-            car_info_updated = {key_mapping.get(k, k): v for k, v in car_info.items()}
+# Alias for backward compatibility
+scarpe_and_save_ikman = scrape_and_save_ikman
 
-            populate_table(data_table, car_info_updated)
-            time.sleep(0.25)
 
-        except requests.RequestException as e:
-            print(f"Request error for {link}: {e}")
-            time.sleep(2)
-            continue
-        except Exception as e:
-            print(f"Unexpected error: {e}")
-        finally:
-            cleanup_driver()
+def _parse_riyasewana_page(soup: BeautifulSoup, posted_date: str) -> Optional[Dict[str, Any]]:
+    """
+    Parse a Riyasewana vehicle detail page.
 
-        
+    Args:
+        soup: BeautifulSoup object of the page
+        posted_date: Date when the listing was posted
 
-def scarpe_and_save_riyasewana(source_table,data_table):
-    global driver
+    Returns:
+        Dict containing vehicle information or None if parsing failed
+    """
+    table = soup.find('table', class_='moret')
+    if not table:
+        return None
 
-    df=read_table(source_table)
-    create_table(data_table, [
-                "contact VARCHAR(255)",
-                "posted_date VARCHAR(255)",
-                "price VARCHAR(255)",
-                "make VARCHAR(255)",
-                "model VARCHAR(255)",
-                "yom VARCHAR(255)",
-                "mileage VARCHAR(255)",
-                "transmision VARCHAR(255)",
-                "fuel_type VARCHAR(255)",
-                "options VARCHAR(255)",
-                "engine_capacity VARCHAR(255)"
-            
-    ])     
+    parsed_data = {}
+    rows = table.find_all('tr')
 
-    # Iterate over the links
-    for link, posted_date in tqdm(zip(df['link'], df['posted_date']), total=len(df)):
+    for row in rows:
+        tds = row.find_all('td')
+        if len(tds) == 4:
+            key1, value1 = tds[0].text.strip(), tds[1].text.strip()
+            key2, value2 = tds[2].text.strip(), tds[3].text.strip()
+            if key1:
+                parsed_data[key1] = value1
+            if key2:
+                parsed_data[key2] = value2
+        elif len(tds) == 2:
+            key, val = tds[0].text.strip(), tds[1].text.strip()
+            if key:
+                parsed_data[key] = val
 
-        try:
-            # Visit the URL
-            driver.get(link)
-            
-            # Wait for the page to fully load
-            time.sleep(3)
-            
-            # Parse the page with BeautifulSoup
-            soup = BeautifulSoup(driver.page_source, 'html.parser')
-            
-            # Extract <tr> tags that contain <td> with specific classes
-            table = soup.find('table', class_='moret')
-            if table:
-                rows = table.find_all('tr')
-                data = {}
-                for row in rows:
-                    tds = row.find_all('td')
-                    if len(tds) == 4:
-                        key1 = tds[0].text.strip()
-                        value1 = tds[1].text.strip()
-                        key2 = tds[2].text.strip()
-                        value2 = tds[3].text.strip()
-                        if key1 and value1:
-                            data[key1] = value1
-                        if key2 and value2:
-                            data[key2] = value2
-                
-                data={
-                    "contact":data.get('Contact', ''),
-                    "posted_date":posted_date,
-                    "price":data.get('Price', ''),
-                    "make":data.get('Make', ''),
-                    "model":data.get('Model', ''),
-                    "yom":data.get('YOM', ''),
-                    "mileage":data.get('Mileage (km)', ''),
-                    "transmision":data.get('Gear', ''),
-                    "fuel_type":data.get('Fuel Type', ''),
-                    "options":data.get('Options', ''),
-                    "engine_capacity":data.get('Engine (cc)', '')
-                }
+    return {
+        "contact": parsed_data.get('Contact', ''),
+        "posted_date": posted_date,
+        "price": parsed_data.get('Price', ''),
+        "make": parsed_data.get('Make', ''),
+        "model": parsed_data.get('Model', ''),
+        "yom": parsed_data.get('YOM', ''),
+        "mileage": parsed_data.get('Mileage (km)', '') or parsed_data.get('Mileage', ''),
+        "transmission": parsed_data.get('Gear', ''),
+        "fuel_type": parsed_data.get('Fuel Type', ''),
+        "options": parsed_data.get('Options', ''),
+        "engine_capacity": parsed_data.get('Engine (cc)', '') or parsed_data.get('Engine', '')
+    }
 
-                populate_table(data_table, data)
 
-        except Exception as e:
-            print(f"Error scraping {link}: {e}")
-        finally:
-            cleanup_driver()
-        
+def scrape_and_save_riyasewana(source_table: str, data_table: str, **kwargs) -> int:
+    """
+    Scrape vehicle details from Riyasewana.com listing pages.
 
-# Cleanup function to properly close the driver
-def cleanup_driver():
-    """Cleanup function to properly close the driver"""
-    global driver
-    try:
-        if driver:
-            driver.quit()
-            print("Driver closed successfully")
-    except Exception as e:
-        print(f"Error closing driver: {e}")
+    Args:
+        source_table: Table containing listing links
+        data_table: Table to store scraped data
 
-        
-    
-    
+    Returns:
+        int: Number of records scraped
+    """
+    with TaskLogger(logger, "scrape_and_save_riyasewana"):
+        df = read_table(source_table)
+        if df is None or df.empty:
+            logger.warning(f"No links found in {source_table}")
+            return 0
+
+        # Apply test limit if configured
+        if TEST_LINK_LIMIT is not None:
+            df = df.head(TEST_LINK_LIMIT)
+            logger.info(f"TEST MODE: Limited to {TEST_LINK_LIMIT} links")
+
+        create_table(data_table, TABLE_SCHEMAS['riyasewana_data'])
+
+        total_records = 0
+        total_links = len(df)
+
+        with FlareSolverrClient() as client:
+            for idx, (link, posted_date) in enumerate(zip(df['link'], df['date']), 1):
+                if idx % 50 == 0:
+                    logger.info(f"Processing link {idx}/{total_links}")
+
+                try:
+                    if not link or pd.isna(link):
+                        logger.debug("Skipping empty URL")
+                        continue
+
+                    logger.debug(f"Fetching: {link}")
+
+                    html_content = client.fetch_page(link)
+                    if not html_content:
+                        logger.warning(f"Failed to fetch {link}")
+                        continue
+
+                    soup = BeautifulSoup(html_content, 'html.parser')
+                    data = _parse_riyasewana_page(soup, posted_date)
+
+                    if data:
+                        populate_table(data_table, data)
+                        total_records += 1
+                        logger.debug(f"Extracted and saved record from {link}")
+                    else:
+                        logger.debug(f"No table data found on page: {link}")
+
+                except Exception as e:
+                    logger.error(f"Error scraping {link}: {e}")
+
+                # Polite randomized delay
+                time.sleep(random.uniform(
+                    scraper_config.min_delay,
+                    scraper_config.max_delay
+                ))
+
+        logger.info(f"Completed Riyasewana data extraction. Total records: {total_records}")
+        return total_records
+
+
+# Alias for backward compatibility
+scarpe_and_save_riyasewana = scrape_and_save_riyasewana

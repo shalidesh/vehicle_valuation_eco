@@ -1,232 +1,321 @@
-import psycopg2
-from datetime import datetime, timedelta
-import requests
-from bs4 import BeautifulSoup
-import pandas as pd
-from tqdm import tqdm 
+"""
+Post links extraction module for scraping vehicle listing links.
+Supports Ikman.lk and Riyasewana.com websites.
+"""
+
 import time
-import re
-from pandas import DataFrame
-from components.utils import create_table, populate_table
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
 import random
-import csv
-import os
+from datetime import datetime, timedelta
+from typing import Optional
 
-# Set up Selenium with pre-installed ChromeDriver
-def setup_chrome_driver():
-    """Setup Chrome WebDriver using pre-installed ChromeDriver"""
-    options = webdriver.ChromeOptions()
-    options.add_argument('--headless')  # Run headless for no UI
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--disable-gpu')
-    options.add_argument('--window-size=1920,1080')
-    options.add_argument('--disable-extensions')
-    options.add_argument('--disable-plugins')
-    options.add_argument('--disable-images')
-    options.add_argument('--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
-    
-    # Use the pre-installed ChromeDriver path from environment or default
-    chromedriver_path = os.environ.get('CHROMEDRIVER_PATH', '/usr/bin/chromedriver')
-    chrome_bin = os.environ.get('CHROME_BIN', '/usr/bin/google-chrome')
-    
-    # Set Chrome binary location
-    options.binary_location = chrome_bin
-    
-    # Create service with the pre-installed ChromeDriver
-    service = Service(executable_path=chromedriver_path)
-    
-    try:
-        driver = webdriver.Chrome(service=service, options=options)
-        print("Chrome driver setup successful")
-        return driver
-    except Exception as e:
-        print(f"Error setting up Chrome driver: {e}")
-        # Fallback: try without specifying explicit paths
+import requests
+import pandas as pd
+from bs4 import BeautifulSoup
+
+from components.logging_config import get_logger, TaskLogger
+from components.config import (
+    ikman_config,
+    riyasewana_config,
+    scraper_config,
+    TABLE_SCHEMAS
+)
+from components.utils import create_table, populate_table
+
+logger = get_logger(__name__)
+
+
+class FlareSolverrClient:
+    """Client for interacting with FlareSolverr proxy service."""
+
+    def __init__(self):
+        self.url = scraper_config.flaresolverr_url
+        self.headers = {"Content-Type": "application/json"}
+        self.session_id: Optional[str] = None
+
+    def create_session(self) -> bool:
+        """Create a new FlareSolverr session."""
         try:
-            options = webdriver.ChromeOptions()
-            options.add_argument('--headless')
-            options.add_argument('--no-sandbox')
-            options.add_argument('--disable-dev-shm-usage')
-            driver = webdriver.Chrome(options=options)
-            print("Chrome driver setup successful with fallback")
-            return driver
-        except Exception as e2:
-            print(f"Fallback also failed: {e2}")
-            raise e2
+            session_data = {
+                "cmd": "sessions.create",
+                "session": f"session_{random.randint(1000, 9999)}"
+            }
+            resp = requests.post(
+                self.url,
+                headers=self.headers,
+                json=session_data,
+                timeout=10
+            )
+            if resp.status_code == 200 and resp.json().get('status') == 'ok':
+                self.session_id = resp.json().get('session')
+                logger.info(f"Created FlareSolverr session: {self.session_id}")
+                return True
+        except Exception as e:
+            logger.warning(f"Failed to create FlareSolverr session: {e}")
+        return False
 
-# Initialize driver globally
-driver = setup_chrome_driver()
+    def destroy_session(self) -> None:
+        """Destroy the current FlareSolverr session."""
+        if self.session_id:
+            try:
+                destroy_data = {"cmd": "sessions.destroy", "session": self.session_id}
+                requests.post(
+                    self.url,
+                    headers=self.headers,
+                    json=destroy_data,
+                    timeout=10
+                )
+                logger.info(f"Destroyed FlareSolverr session: {self.session_id}")
+            except Exception as e:
+                logger.warning(f"Failed to destroy session: {e}")
+            finally:
+                self.session_id = None
 
-def scrape_links_ikman():
-    headers = {
-        "User-Agent": "web-scrapping",
-        "From": "youremail@example.com"  # Include your email so the website owner can contact you if necessary
-    }
+    def fetch_page(self, url: str, max_retries: int = 3) -> Optional[str]:
+        """
+        Fetch a page through FlareSolverr.
 
-    page = 1
-    make = ['honda', 'toyota', 'nissan', 'suzuki', 'micro', 'mitsubishi', 'mahindra', 'mazda', 'daihatsu', 'hyundai', 'kia', 'bmw', 'perodua', 'tata','audi','isuzu','renault','ford','volkswagen','land rover','jaguar','mg']
-    # make = ['honda', 'toyota', 'nissan', 'suzuki', 'micro', 'mitsubishi', 'mahindra', 'mazda', 'daihatsu', 'hyundai', 'kia', 'bmw', 'perodua', 'tata']
-    transmission = ['automatic', 'manual', 'tiptronic']
-    fuel_type = ['petrol', 'diesel', 'hybrid', 'electric']
+        Args:
+            url: URL to fetch
+            max_retries: Maximum number of retry attempts
 
-    create_table("ikman_vehicle_post_links", ["link VARCHAR(255)","page VARCHAR(255)","transmition VARCHAR(255)","fuel_type VARCHAR(255)"])
+        Returns:
+            Optional[str]: HTML content or None if failed
+        """
+        for attempt in range(max_retries):
+            try:
+                fetch_data = {
+                    "cmd": "request.get",
+                    "url": url,
+                    "maxTimeout": 60000
+                }
+                if self.session_id:
+                    fetch_data["session"] = self.session_id
 
-    # Add an outer progress bar for "make"
-    for m in tqdm(make, desc="Processing Makes", unit="make"):
-        for t in tqdm(transmission, desc=f"Processing Transmissions ({m})", leave=False, unit="transmission"):
-            for f in tqdm(fuel_type, desc=f"Processing Fuel Types ({m}, {t})", leave=False, unit="fuel type"):
-                isHaveNextPage = True
-                while isHaveNextPage:
-                    target_url = f'https://ikman.lk/en/ads/sri-lanka/cars/{m}?sort=date&order=desc&buy_now=0&urgent=0&page={page}&enum.transmission={t}&tree.brand={m}&enum.fuel_type={f}'
-                    
-                    try:
-                        url = requests.get(target_url, headers=headers, timeout=10)
-                        soup = BeautifulSoup(url.text, 'lxml')
-                        product = soup.find('ul', class_="list--3NxGO")
+                response = requests.post(
+                    self.url,
+                    headers=self.headers,
+                    json=fetch_data,
+                    timeout=scraper_config.request_timeout
+                )
 
-                        # If no results found, stop the loop
-                        if product is None or len(product.find_all("li", class_="normal--2QYVk gtm-normal-ad")) == 0:
-                            isHaveNextPage = False
-                            page = 1
-                            print("page is no content-----------------")
-                            break
-
-                        # Add progress bar for items within a page
-                        for item in tqdm(product.find_all("li", class_="normal--2QYVk gtm-normal-ad"), desc="Processing Items", leave=False):
-                            anchor = item.find('a')
-                            if anchor is not None:
-                                link = anchor.get('href')
-                                link = f"https://ikman.lk{link}"   
-                                data={
-                                    "link": link,
-                                    "page": str(page),
-                                    "transmition": t,
-                                    "fuel_type": f
-                                }
-                                populate_table("ikman_vehicle_post_links", data)
-                            else:
-                                print('No anchor tag found in the item.')
-
-                        page += 1
-                        if page == 3:  # Safety break to avoid infinite loops
-                            isHaveNextPage = False
-                            page = 1
-                            break
-                        time.sleep(0.5)
-                        
-                    except requests.RequestException as e:
-                        print(f"Request error for {target_url}: {e}")
-                        time.sleep(2)  # Wait before retrying
-                        continue
-                    except Exception as e:
-                        print(f"Unexpected error: {e}")
-                    finally:
-                        cleanup_driver()
-
-
-
-# Scrape the riyasewana website
-def scrape_links_riyasewana():
-    global driver
-    
-    threshold_date = datetime.now() - timedelta(weeks=3)
-
-    page = 1
-    makes = ['nissan', 'suzuki', 'micro', 'mitsubishi']
-    # makes = ['honda', 'toyota', 'nissan', 'suzuki', 'micro', 'mitsubishi', 'mahindra', 'mazda', 'daihatsu', 'hyundai', 'kia', 'bmw', 'perodua', 'tata']
-    types = ['cars', 'vans', 'suvs', 'crew-cabs', 'pickups']
-
-    create_table("riyasewana_vehicle_post_links", ["link VARCHAR(255)","page VARCHAR(255)","date VARCHAR(255)","make VARCHAR(255)"])
-
-    for make in makes:
-        for type in types:
-            isHaveNextPage = True
-            while isHaveNextPage:
-                try:
-                    if page == 1:
-                        target_url = f'https://riyasewana.com/search/{type}/{make}'
+                if response.status_code == 200:
+                    result = response.json()
+                    if result.get('status') == 'ok':
+                        html_content = result.get('solution', {}).get('response', '')
+                        if html_content:
+                            return html_content
                     else:
-                        target_url = f'https://riyasewana.com/search/{type}/{make}?page={page}'
+                        logger.warning(
+                            f"FlareSolverr error (attempt {attempt + 1}): "
+                            f"{result.get('message', 'Unknown error')}"
+                        )
+                else:
+                    logger.warning(f"HTTP {response.status_code} from FlareSolverr (attempt {attempt + 1})")
 
-                    print(f"Scraping: {target_url}")
-                    driver.get(target_url)
+            except requests.exceptions.Timeout:
+                logger.warning(f"Timeout on attempt {attempt + 1} for {url}")
+            except Exception as e:
+                logger.error(f"Error on attempt {attempt + 1}: {e}")
 
-                    time.sleep(random.uniform(3, 7))  # Random delay between 3 to 7 seconds
+            if attempt < max_retries - 1:
+                time.sleep(random.uniform(5, 10))
 
-                    soup = BeautifulSoup(driver.page_source, 'html.parser')
-                    content_div = soup.find('div', id='content')
+        return None
 
-                    pagination = soup.find('div', class_='pagination')
+    def __enter__(self):
+        self.create_session()
+        return self
 
-                    if pagination is None:
-                        current_page = 1
-                    else:
-                        current_page_element = pagination.find('a', class_="current")
-                        if current_page_element:
-                            current_page = current_page_element.text.strip()
-                        else:
-                            current_page = 1
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.destroy_session()
+        return False
 
-                    current_page_number = current_page
 
-                    if not int(current_page_number) == page:
-                        isHaveNextPage = False
-                        page = 1
-                        break
+def scrape_links_ikman(**kwargs) -> int:
+    """
+    Scrape vehicle listing links from Ikman.lk.
 
-                    ul_tag = content_div.find('ul') if content_div else None
+    Returns:
+        int: Number of links scraped
+    """
+    with TaskLogger(logger, "scrape_links_ikman"):
+        headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; VehicleDataBot/1.0)",
+            "From": "scraper@example.com"
+        }
 
-                    if ul_tag is None or len(ul_tag.find_all('li', class_="item round")) == 0:
-                        isHaveNextPage = False
-                        page = 1
-                        break
+        create_table(ikman_config.links_table, TABLE_SCHEMAS['ikman_links'])
 
-                    li_tags = ul_tag.find_all('li', class_="item round") if ul_tag else []
+        total_links = 0
+        total_makes = len(ikman_config.makes)
 
-                    for li in li_tags:
-                        h2_tag = li.find('h2')
-                        date_div = li.find('div', class_='boxintxt s')
-                        date_text = date_div.text.strip() if date_div else ""
+        for make_idx, make in enumerate(ikman_config.makes, 1):
+            logger.info(f"Processing make {make_idx}/{total_makes}: {make}")
+
+            for transmission in ikman_config.transmissions:
+                for fuel_type in ikman_config.fuel_types:
+                    page = 1
+                    has_next_page = True
+
+                    while has_next_page:
+                        target_url = (
+                            f'{ikman_config.base_url}/en/ads/sri-lanka/cars/{make}'
+                            f'?sort=date&order=desc&buy_now=0&urgent=0&page={page}'
+                            f'&enum.transmission={transmission}&tree.brand={make}'
+                            f'&enum.fuel_type={fuel_type}'
+                        )
 
                         try:
-                            date_obj = pd.to_datetime(date_text)
-                            if date_obj < pd.Timestamp(threshold_date):
-                                isHaveNextPage = False
-                                break
-                        except ValueError:
-                            print(f"Error parsing date: {date_text}")
+                            response = requests.get(target_url, headers=headers, timeout=10)
+                            soup = BeautifulSoup(response.text, 'lxml')
+                            product_list = soup.find('ul', class_="list--3NxGO")
 
-                        if h2_tag:
-                            a_tag = h2_tag.find('a')
-                            if a_tag and 'href' in a_tag.attrs:
-                                # Write each record to the database
-                                data={
+                            if not product_list:
+                                logger.debug(f"No products found for {make}/{transmission}/{fuel_type} page {page}")
+                                has_next_page = False
+                                break
+
+                            items = product_list.find_all("li", class_="normal--2QYVk gtm-normal-ad")
+                            if not items:
+                                has_next_page = False
+                                break
+
+                            for item in items:
+                                anchor = item.find('a')
+                                if anchor and anchor.get('href'):
+                                    link = f"{ikman_config.base_url}{anchor.get('href')}"
+                                    data = {
+                                        "link": link,
+                                        "page": str(page),
+                                        "transmition": transmission,
+                                        "fuel_type": fuel_type
+                                    }
+                                    populate_table(ikman_config.links_table, data)
+                                    total_links += 1
+
+                            page += 1
+                            if page > 2:  # Limit pages per combination
+                                has_next_page = False
+                                break
+
+                            time.sleep(0.5)
+
+                        except requests.RequestException as e:
+                            logger.error(f"Request error for {target_url}: {e}")
+                            time.sleep(2)
+                        except Exception as e:
+                            logger.error(f"Unexpected error processing {target_url}: {e}")
+                            has_next_page = False
+
+        logger.info(f"Completed Ikman link scraping. Total links: {total_links}")
+        return total_links
+
+
+def scrape_links_riyasewana(**kwargs) -> int:
+    """
+    Scrape vehicle listing links from Riyasewana.com using FlareSolverr.
+
+    Returns:
+        int: Number of links scraped
+    """
+    with TaskLogger(logger, "scrape_links_riyasewana"):
+        threshold_date = datetime.now() - timedelta(weeks=riyasewana_config.weeks_threshold)
+
+        create_table(riyasewana_config.links_table, TABLE_SCHEMAS['riyasewana_links'])
+
+        total_links = 0
+
+        with FlareSolverrClient() as client:
+            for make in riyasewana_config.makes:
+                for vehicle_type in riyasewana_config.vehicle_types:
+                    page = 1
+                    consecutive_failures = 0
+                    has_next_page = True
+
+                    while has_next_page and page <= 2:
+                        if page == 1:
+                            target_url = f'{riyasewana_config.base_url}/search/{vehicle_type}/{make}'
+                        else:
+                            target_url = f'{riyasewana_config.base_url}/search/{vehicle_type}/{make}?page={page}'
+
+                        logger.info(f"Scraping: {target_url}")
+
+                        html_content = client.fetch_page(target_url)
+
+                        if not html_content:
+                            consecutive_failures += 1
+                            logger.warning(f"Failed to fetch page (#{consecutive_failures})")
+                            if consecutive_failures >= 3:
+                                logger.error(f"Too many failures for {make} - {vehicle_type}, skipping")
+                                break
+                            time.sleep(random.uniform(10, 20))
+                            continue
+
+                        consecutive_failures = 0
+
+                        soup = BeautifulSoup(html_content, 'html.parser')
+                        content_div = soup.find('div', id='content')
+
+                        # Check pagination
+                        pagination = soup.find('div', class_='pagination')
+                        current_page = 1
+                        if pagination:
+                            current_elem = pagination.find('a', class_='current')
+                            if current_elem:
+                                try:
+                                    current_page = int(current_elem.text.strip())
+                                except ValueError:
+                                    pass
+
+                        if current_page != page:
+                            logger.warning(f"Page mismatch: expected {page}, got {current_page}")
+                            has_next_page = False
+                            break
+
+                        ul_tag = content_div.find('ul') if content_div else None
+                        if not ul_tag:
+                            logger.debug(f"No items found on page {page}")
+                            has_next_page = False
+                            break
+
+                        li_tags = ul_tag.find_all('li', class_='item round')
+                        if not li_tags:
+                            has_next_page = False
+                            break
+
+                        logger.info(f"Found {len(li_tags)} items on page {page}")
+
+                        for li in li_tags:
+                            date_div = li.find('div', class_='boxintxt s')
+                            date_text = date_div.text.strip() if date_div else ""
+
+                            try:
+                                date_obj = pd.to_datetime(date_text)
+                                if date_obj < pd.Timestamp(threshold_date):
+                                    logger.info(f"Reached date cutoff: {date_text}")
+                                    has_next_page = False
+                                    break
+                            except ValueError:
+                                logger.warning(f"Error parsing date: {date_text}")
+
+                            h2_tag = li.find('h2')
+                            if h2_tag:
+                                a_tag = h2_tag.find('a')
+                                if a_tag and 'href' in a_tag.attrs:
+                                    data = {
                                         "link": a_tag['href'],
                                         "page": str(page),
                                         "date": str(date_text),
                                         "make": str(make)
-                                }
-                                populate_table("riyasewana_vehicle_post_links", data)
+                                    }
+                                    populate_table(riyasewana_config.links_table, data)
+                                    total_links += 1
 
-                    page += 1
-                    
-                except Exception as e:
-                    print(f"Error scraping {target_url}: {e}")
-                finally:
-                    cleanup_driver()
+                        page += 1
+                        time.sleep(random.uniform(3, 8))
 
+                    # Delay between make/type combinations
+                    time.sleep(random.uniform(5, 15))
 
-# Cleanup function to properly close the driver
-def cleanup_driver():
-    """Cleanup function to properly close the driver"""
-    global driver
-    try:
-        if driver:
-            driver.quit()
-            print("Driver closed successfully")
-    except Exception as e:
-        print(f"Error closing driver: {e}")
-
+        logger.info(f"Completed Riyasewana link scraping. Total links: {total_links}")
+        return total_links

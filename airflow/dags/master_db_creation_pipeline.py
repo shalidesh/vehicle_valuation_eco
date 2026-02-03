@@ -6,20 +6,27 @@ by merging data from Ikman.lk and Riyasewana.com pipelines, applying
 statistical analysis, and generating summary statistics.
 
 Pipeline stages:
-1. Wait for upstream pipelines (Ikman & Riyasewana) to complete
-2. Load and clean data from master vehicle table
-3. Apply IQR filtering to remove outliers
-4. Group data and apply conditional aggregation
-5. Apply text cleaning and normalization
-6. Apply price floor and ceiling filters
-7. Save final summary statistics
+1. Load and clean data from master vehicle table
+2. Apply IQR filtering to remove outliers
+3. Group data and apply conditional aggregation
+4. Apply text cleaning and normalization
+5. Apply price floor and ceiling filters
+6. Save final summary statistics
+
+Orchestration:
+- Acts as a DATA CONSUMER using Airflow Datasets
+- Automatically triggers when BOTH Ikman and Riyasewana DAGs complete
+- No ExternalTaskSensor needed - Dataset scheduling handles coordination
+- Eliminates execution_date mismatch issues from manual triggers
 """
 
 from datetime import datetime, timedelta
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.sensors.external_task import ExternalTaskSensor
+# Dataset enables event-driven orchestration - this DAG consumes from upstream producers
+# Scheduling on multiple datasets means this DAG runs when ALL datasets are updated
+from airflow.datasets import Dataset
 
 from components.data_preprocces import (
     merge_and_filter_yom,
@@ -35,12 +42,22 @@ from components.config import ikman_config, riyasewana_config
 
 
 # =============================================================================
+# Dataset Definitions - Must match producer DAGs exactly
+# =============================================================================
+
+# These Dataset URIs must match the outlets defined in the producer DAGs
+# When both datasets are updated, this DAG will be triggered automatically
+IKMAN_DATASET = Dataset("postgres://ikman_post_data_preprocced")
+RIYASEWANA_DATASET = Dataset("postgres://riyasewana_post_data_preprocced")
+
+
+# =============================================================================
 # DAG Configuration
 # =============================================================================
 
 DAG_ID = "Master_DB_Creation_Pipeline"
 DAG_DESCRIPTION = "Creates master vehicle valuation database with statistical analysis"
-DAG_TAGS = ["vehicle", "master", "statistics", "etl"]
+DAG_TAGS = ["vehicle", "master", "statistics", "etl", "consumer"]
 
 # Intermediate table names
 TABLES = {
@@ -53,24 +70,19 @@ TABLES = {
     "output": "summery_statistics_table",
 }
 
+# Shared start_date ensures consistent scheduling across all DAGs
+SHARED_START_DATE = datetime(2025, 7, 2)
+
 DEFAULT_ARGS = {
     "owner": "shalika_Deshan",
     "depends_on_past": False,
-    "start_date": datetime(2025, 7, 2),
+    "start_date": SHARED_START_DATE,
     "email_on_failure": True,
     "email_on_success": True,
     "email_on_retry": False,
     "retries": 3,
     "retry_delay": timedelta(seconds=30),
     "execution_timeout": timedelta(hours=2),
-}
-
-# External task sensor configuration
-SENSOR_CONFIG = {
-    "allowed_states": ["success"],
-    "mode": "reschedule",
-    "timeout": 14400,  # 4 hours
-    "poke_interval": 120,  # 2 minutes
 }
 
 
@@ -82,46 +94,24 @@ with DAG(
     dag_id=DAG_ID,
     default_args=DEFAULT_ARGS,
     description=DAG_DESCRIPTION,
-    schedule_interval="@daily",
+    # Dataset-based scheduling: triggers when ALL listed datasets are updated
+    # This replaces ExternalTaskSensor and eliminates execution_date mismatch issues
+    # The DAG runs automatically after both Ikman AND Riyasewana complete successfully
+    schedule=[IKMAN_DATASET, RIYASEWANA_DATASET],
+    # catchup=False prevents backfill runs on DAG deployment
     catchup=False,
     tags=DAG_TAGS,
+    # max_active_runs=1 prevents concurrent executions that could cause data conflicts
     max_active_runs=1,
     doc_md=__doc__,
 ) as dag:
 
     # -------------------------------------------------------------------------
-    # External Task Sensors - Wait for upstream pipelines
-    # -------------------------------------------------------------------------
-
-    wait_for_riyasewana = ExternalTaskSensor(
-        task_id="wait_for_riyasewana_pipeline",
-        external_dag_id="Vehicle_Data_scrape_Pipeline_Riyasewana",
-        external_task_id="data_proprocessing_riyasewana",
-        **SENSOR_CONFIG,
-        doc_md="""
-        ### Wait for Riyasewana Pipeline
-        Waits for the Riyasewana data scraping pipeline to complete
-        before proceeding with data merge.
-        """,
-    )
-
-    wait_for_ikman = ExternalTaskSensor(
-        task_id="wait_for_ikman_pipeline",
-        external_dag_id="Vehicle_Data_scrape_Pipeline_Ikman",
-        external_task_id="data_proprocessing_ikman",
-        **SENSOR_CONFIG,
-        doc_md="""
-        ### Wait for Ikman Pipeline
-        Waits for the Ikman data scraping pipeline to complete
-        before proceeding with data merge.
-        """,
-    )
-
-    # -------------------------------------------------------------------------
     # Data Processing Tasks
     # -------------------------------------------------------------------------
 
-    # Task 0: Merge data from both sources
+    # Task 1: Merge data from both sources
+    # No sensor needed - Dataset scheduling ensures both upstream DAGs completed
     task_merge_data = PythonOperator(
         task_id="merge_and_filter_yom",
         python_callable=merge_and_filter_yom,
@@ -138,10 +128,12 @@ with DAG(
         - Normalizes column names (price -> vehicle_price)
         - Filters records to YOM >= 2000
         - Creates the master_vehicle_data table
+
+        **Note:** This task runs after both upstream datasets are updated.
         """,
     )
 
-    # Task 1: Load and clean data
+    # Task 2: Load and clean data
     task_load_and_clean = PythonOperator(
         task_id="load_and_clean_data",
         python_callable=load_and_clean_data,
@@ -160,7 +152,7 @@ with DAG(
         """,
     )
 
-    # Task 2: Apply IQR filtering
+    # Task 3: Apply IQR filtering
     task_iqr_filter = PythonOperator(
         task_id="apply_iqr_filter",
         python_callable=apply_iqr_filter,
@@ -178,7 +170,7 @@ with DAG(
         """,
     )
 
-    # Task 3: Group and aggregate
+    # Task 4: Group and aggregate
     task_group_aggregate = PythonOperator(
         task_id="group_and_aggregate",
         python_callable=group_and_aggregate,
@@ -196,7 +188,7 @@ with DAG(
         """,
     )
 
-    # Task 4: Apply text cleaning
+    # Task 5: Apply text cleaning
     task_text_cleaning = PythonOperator(
         task_id="apply_text_cleaning",
         python_callable=apply_text_cleaning,
@@ -214,7 +206,7 @@ with DAG(
         """,
     )
 
-    # Task 5: Apply price filters
+    # Task 6: Apply price filters
     task_price_filters = PythonOperator(
         task_id="apply_price_filters",
         python_callable=apply_price_filters,
@@ -234,7 +226,7 @@ with DAG(
         """,
     )
 
-    # Task 6: Save summary statistics
+    # Task 7: Save summary statistics
     task_save_summary = PythonOperator(
         task_id="save_summary_statistics",
         python_callable=save_summary_statistics,
@@ -255,10 +247,8 @@ with DAG(
     # Task Dependencies
     # -------------------------------------------------------------------------
 
-    # Wait for both upstream pipelines before merging
-    [wait_for_riyasewana, wait_for_ikman] >> task_merge_data
-
     # Sequential processing pipeline
+    # No ExternalTaskSensor needed - Dataset scheduling handles upstream coordination
     (
         task_merge_data
         >> task_load_and_clean

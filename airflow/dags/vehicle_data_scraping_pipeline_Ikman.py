@@ -8,12 +8,20 @@ Pipeline stages:
 1. Scrape post links from Ikman.lk listings
 2. Extract vehicle details from each listing page
 3. Preprocess and clean the extracted data
+
+Orchestration:
+- Acts as a DATA PRODUCER using Airflow Datasets
+- Publishes to IKMAN_DATASET when preprocessing completes
+- Master DAG consumes this dataset along with Riyasewana dataset
 """
 
 from datetime import datetime, timedelta
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
+# Dataset enables event-driven orchestration without ExternalTaskSensor
+# When this DAG completes, it "produces" to a Dataset, triggering downstream consumers
+from airflow.datasets import Dataset
 
 from components.post_links_extraction import scrape_links_ikman
 from components.post_data_extraction import scrape_and_save_ikman
@@ -23,17 +31,30 @@ from components.config import ikman_config
 
 
 # =============================================================================
+# Dataset Definition
+# =============================================================================
+
+# Dataset URI represents the logical output of this pipeline
+# The Master DAG will subscribe to this dataset and trigger when it's updated
+# URI format: scheme://identifier - using postgres table as the identifier
+IKMAN_DATASET = Dataset("postgres://ikman_post_data_preprocced")
+
+
+# =============================================================================
 # DAG Configuration
 # =============================================================================
 
 DAG_ID = "Vehicle_Data_scrape_Pipeline_Ikman"
 DAG_DESCRIPTION = "Scrapes vehicle listings from Ikman.lk and processes the data"
-DAG_TAGS = ["vehicle", "scraping", "ikman", "etl"]
+DAG_TAGS = ["vehicle", "scraping", "ikman", "etl", "producer"]
+
+# Shared start_date ensures consistent scheduling across all DAGs
+SHARED_START_DATE = datetime(2025, 7, 2)
 
 DEFAULT_ARGS = {
     "owner": "shalika_Deshan",
     "depends_on_past": False,
-    "start_date": datetime(2025, 7, 2),
+    "start_date": SHARED_START_DATE,
     "email_on_failure": True,
     "email_on_success": True,
     "email_on_retry": False,
@@ -51,9 +72,12 @@ with DAG(
     dag_id=DAG_ID,
     default_args=DEFAULT_ARGS,
     description=DAG_DESCRIPTION,
-    schedule_interval=None,  # Triggered by Riyasewana DAG
+    # Every Friday at 4:05 PM (cron: minute hour day month weekday)
+    schedule="13 05 * * 1",
+    # catchup=False prevents backfill runs on DAG deployment
     catchup=False,
     tags=DAG_TAGS,
+    # max_active_runs=1 prevents concurrent executions that could cause data conflicts
     max_active_runs=1,
     doc_md=__doc__,
 ) as dag:
@@ -92,6 +116,8 @@ with DAG(
     )
 
     # Task 3: Preprocess extracted data
+    # outlets=[IKMAN_DATASET] marks this task as a Dataset producer
+    # When this task succeeds, Airflow updates the Dataset, triggering any consumer DAGs
     preprocess_data = PythonOperator(
         task_id="data_proprocessing_ikman",
         python_callable=data_preprocces_ikman,
@@ -101,13 +127,17 @@ with DAG(
         },
         on_success_callback=success_email,
         on_failure_callback=failure_email,
+        # Dataset outlet - signals completion to downstream consumer DAGs
+        outlets=[IKMAN_DATASET],
         doc_md="""
-        ### Preprocess Data
+        ### Preprocess Data (Dataset Producer)
         Cleans and normalizes the scraped data:
         - Extracts numeric values from prices, mileage, engine capacity
         - Normalizes text fields to uppercase
         - Filters invalid records
         Stores processed data in the `ikman_post_data_preprocced` table.
+
+        **Publishes to IKMAN_DATASET on success.**
         """,
     )
 

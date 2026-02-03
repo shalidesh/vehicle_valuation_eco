@@ -10,14 +10,20 @@ Pipeline stages:
 1. Scrape post links from Riyasewana.com listings
 2. Extract vehicle details from each listing page
 3. Preprocess and clean the extracted data
+
+Orchestration:
+- Acts as a DATA PRODUCER using Airflow Datasets
+- Publishes to RIYASEWANA_DATASET when preprocessing completes
+- Master DAG consumes this dataset along with Ikman dataset
 """
 
 from datetime import datetime, timedelta
-import pendulum
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.operators.trigger_dagrun import TriggerDagRunOperator
+# Dataset enables event-driven orchestration without ExternalTaskSensor
+# When this DAG completes, it "produces" to a Dataset, triggering downstream consumers
+from airflow.datasets import Dataset
 
 from components.post_links_extraction import scrape_links_riyasewana
 from components.post_data_extraction import scrape_and_save_riyasewana
@@ -27,16 +33,30 @@ from components.config import riyasewana_config
 
 
 # =============================================================================
+# Dataset Definition
+# =============================================================================
+
+# Dataset URI represents the logical output of this pipeline
+# The Master DAG will subscribe to this dataset and trigger when it's updated
+# URI format: scheme://identifier - using postgres table as the identifier
+RIYASEWANA_DATASET = Dataset("postgres://riyasewana_post_data_preprocced")
+
+
+# =============================================================================
 # DAG Configuration
 # =============================================================================
 
 DAG_ID = "Vehicle_Data_scrape_Pipeline_Riyasewana"
 DAG_DESCRIPTION = "Scrapes vehicle listings from Riyasewana.com and processes the data"
-DAG_TAGS = ["vehicle", "scraping", "riyasewana", "etl"]
+DAG_TAGS = ["vehicle", "scraping", "riyasewana", "etl", "producer"]
+
+# Shared start_date ensures consistent scheduling across all DAGs
+SHARED_START_DATE = datetime(2025, 7, 2)
 
 DEFAULT_ARGS = {
     "owner": "shalika_Deshan",
     "depends_on_past": False,
+    "start_date": SHARED_START_DATE,
     "email_on_failure": True,
     "email_on_success": True,
     "email_on_retry": False,
@@ -50,19 +70,18 @@ DEFAULT_ARGS = {
 # DAG Definition
 # =============================================================================
 
-# Colombo timezone for scheduling
-COLOMBO_TZ = pendulum.timezone("Asia/Colombo")
-
 with DAG(
     dag_id=DAG_ID,
     default_args=DEFAULT_ARGS,
     description=DAG_DESCRIPTION,
-    schedule_interval="05 14 * * 5",  # Every Friday at 1:45 PM
+    # Every Friday at 4:05 PM (cron: minute hour day month weekday)
+    schedule="13 05 * * 1",
+    # catchup=False prevents backfill runs on DAG deployment
     catchup=False,
     tags=DAG_TAGS,
+    # max_active_runs=1 prevents concurrent executions that could cause data conflicts
     max_active_runs=1,
     doc_md=__doc__,
-    start_date=datetime(2025, 7, 2, tzinfo=COLOMBO_TZ),
 ) as dag:
 
     # Task 1: Scrape post links from Riyasewana.com
@@ -100,6 +119,8 @@ with DAG(
     )
 
     # Task 3: Preprocess extracted data
+    # outlets=[RIYASEWANA_DATASET] marks this task as a Dataset producer
+    # When this task succeeds, Airflow updates the Dataset, triggering any consumer DAGs
     preprocess_data = PythonOperator(
         task_id="data_proprocessing_riyasewana",
         python_callable=data_preprocces_riyasewana,
@@ -109,27 +130,19 @@ with DAG(
         },
         on_success_callback=success_email,
         on_failure_callback=failure_email,
+        # Dataset outlet - signals completion to downstream consumer DAGs
+        outlets=[RIYASEWANA_DATASET],
         doc_md="""
-        ### Preprocess Data
+        ### Preprocess Data (Dataset Producer)
         Cleans and normalizes the scraped data:
         - Extracts numeric values from prices
         - Filters out negotiable prices
         - Normalizes text fields to uppercase
         Stores processed data in the `riyasewana_post_data_preprocced` table.
-        """,
-    )
 
-    # Task 4: Trigger Ikman DAG after Riyasewana pipeline completes
-    trigger_ikman_dag = TriggerDagRunOperator(
-        task_id="trigger_ikman_pipeline",
-        trigger_dag_id="Vehicle_Data_scrape_Pipeline_Ikman",
-        wait_for_completion=False,
-        doc_md="""
-        ### Trigger Ikman Pipeline
-        Triggers the Ikman.lk scraping pipeline after Riyasewana
-        pipeline completes successfully.
+        **Publishes to RIYASEWANA_DATASET on success.**
         """,
     )
 
     # Define task dependencies
-    scrape_post_links >> scrape_vehicle_info >> preprocess_data >> trigger_ikman_dag
+    scrape_post_links >> scrape_vehicle_info >> preprocess_data

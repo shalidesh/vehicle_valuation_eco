@@ -133,6 +133,30 @@ def create_table(table_name: str, columns: List[str]) -> None:
                 logger.info(f"Recreated table after type conflict: {table_name}")
 
 
+def ensure_table_exists(table_name: str, columns: List[str]) -> None:
+    """
+    Create a table if it doesn't exist. Preserves existing data (no deletion).
+
+    Args:
+        table_name: Name of the table to create
+        columns: List of column definitions (e.g., ["id INT", "name VARCHAR(255)"])
+    """
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                create_sql = sql.SQL("CREATE TABLE IF NOT EXISTS {} ({})").format(
+                    sql.Identifier(table_name),
+                    sql.SQL(', '.join(columns))
+                )
+                cur.execute(create_sql)
+                conn.commit()
+                logger.info(f"Ensured table exists (data preserved): {table_name}")
+
+            except psycopg2.errors.UniqueViolation:
+                conn.rollback()
+                logger.warning(f"Table {table_name} already exists with different schema")
+
+
 def populate_table(table_name: str, data: Dict[str, Any]) -> None:
     """
     Insert a single row into a table.

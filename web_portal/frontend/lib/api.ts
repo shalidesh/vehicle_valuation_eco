@@ -6,9 +6,9 @@ import type {
   FastMovingVehicle,
   FastMovingVehicleCreate,
   FastMovingVehicleUpdate,
-  ScrapedVehicle,
-  ScrapedVehicleCreate,
-  ScrapedVehicleUpdate,
+  SummaryStatistic,
+  SummaryStatisticCreate,
+  SummaryStatisticUpdate,
   ERPModelMapping,
   ERPModelMappingCreate,
   ERPModelMappingUpdate,
@@ -140,32 +140,44 @@ export const fastMovingVehiclesAPI = {
   },
 };
 
-// Scraped Vehicles APIs
-export const scrapedVehiclesAPI = {
+// Summary Statistics APIs
+export const summaryStatisticsAPI = {
   getAll: async (params?: {
-    vehicle_type?: string;
-    manufacturer?: string;
+    make?: string;
     model?: string;
-    yom?: number;
+    yom?: string;
+    transmission?: string;
+    fuel_type?: string;
     skip?: number;
     limit?: number;
-  }): Promise<ScrapedVehicle[]> => {
-    const response = await api.get('/api/vehicles/scraped', { params });
+  }): Promise<SummaryStatistic[]> => {
+    const response = await api.get('/api/vehicles/summary-statistics', { params });
     return response.data;
   },
 
-  create: async (vehicle: ScrapedVehicleCreate): Promise<ScrapedVehicle> => {
-    const response = await api.post('/api/vehicles/scraped', vehicle);
+  create: async (record: SummaryStatisticCreate): Promise<SummaryStatistic> => {
+    const response = await api.post('/api/vehicles/summary-statistics', record);
     return response.data;
   },
 
-  update: async (id: number, vehicle: ScrapedVehicleUpdate): Promise<ScrapedVehicle> => {
-    const response = await api.put(`/api/vehicles/scraped/${id}`, vehicle);
+  update: async (
+    compositeKey: { make: string; model: string; yom: string; transmission: string; fuel_type: string },
+    record: SummaryStatisticUpdate
+  ): Promise<SummaryStatistic> => {
+    const response = await api.put('/api/vehicles/summary-statistics', record, {
+      params: compositeKey,
+    });
     return response.data;
   },
 
-  delete: async (id: number): Promise<void> => {
-    await api.delete(`/api/vehicles/scraped/${id}`);
+  delete: async (compositeKey: {
+    make: string;
+    model: string;
+    yom: string;
+    transmission: string;
+    fuel_type: string;
+  }): Promise<void> => {
+    await api.delete('/api/vehicles/summary-statistics', { params: compositeKey });
   },
 };
 

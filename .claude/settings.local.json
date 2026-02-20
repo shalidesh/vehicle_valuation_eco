@@ -3,7 +3,9 @@
     "allow": [
       "Bash(docker exec:*)",
       "Bash(docker restart:*)",
-      "Bash(docker logs:*)"
+      "Bash(docker logs:*)",
+      "Bash(del \"C:\\\\Users\\\\User\\\\Desktop\\\\CDB\\\\CreditEvalution\\\\Vehicle_Valuation_Version_02\\\\api_uat\\\\app\\\\model_mapping.py\")",
+      "Bash(dir:*)"
     ]
   }
 }

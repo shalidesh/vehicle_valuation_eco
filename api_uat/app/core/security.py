@@ -86,8 +86,8 @@ def verify_token(token: str) -> dict:
     """
     # Check if using fixed access token (alternative authentication method)
 
-    logger.info("Verifying token",settings.fixed_access_token )
-    logger.info("Verifying token",token )
+    logger.info("Verifying token: %s", settings.fixed_access_token)
+    logger.info("Verifying token: %s", token)
     if settings.fixed_access_token and token == settings.fixed_access_token:
         logger.info("Authentication using fixed access token")
         return {

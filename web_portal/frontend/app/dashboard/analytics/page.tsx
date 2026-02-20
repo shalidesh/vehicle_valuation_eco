@@ -518,6 +518,7 @@ export default function AnalyticsPage() {
               value={selectedDataSource}
               onChange={(e) => {
                 setSelectedDataSource(e.target.value);
+                setSelectedVehicleType('');
                 setSelectedManufacturer('');
                 setSelectedModel('');
                 setSelectedYear(null);
@@ -526,7 +527,7 @@ export default function AnalyticsPage() {
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             >
               <option value="fast_moving">Fast Moving Vehicle Data</option>
-              <option value="scraped">Scrape Data</option>
+              <option value="summary">Summary Statistics</option>
             </select>
           </div>
 
@@ -554,10 +555,11 @@ export default function AnalyticsPage() {
             </div>
           )}
 
-          {/* Manufacturer */}
+
+          {/* Manufacturer / Make */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Manufacturer
+              {selectedDataSource === 'summary' ? 'Make' : 'Manufacturer'}
             </label>
             <select
               value={selectedManufacturer}
@@ -570,7 +572,7 @@ export default function AnalyticsPage() {
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               disabled={isLoadingFilters}
             >
-              <option value="">Select Manufacturer</option>
+              <option value="">{selectedDataSource === 'summary' ? 'Select Make' : 'Select Manufacturer'}</option>
               {selectedDataSource === 'fast_moving' && (
                 <option value="Fast Moving Vehicle Index">Fast Moving Vehicle Index</option>
               )}

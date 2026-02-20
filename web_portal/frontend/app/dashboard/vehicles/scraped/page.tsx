@@ -1,44 +1,45 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { scrapedVehiclesAPI, analyticsAPI } from '@/lib/api';
-import { ScrapedVehicle, ScrapedVehicleCreate, ScrapedVehicleUpdate } from '@/types';
+import { summaryStatisticsAPI, analyticsAPI } from '@/lib/api';
+import { SummaryStatistic, SummaryStatisticCreate, SummaryStatisticUpdate } from '@/types';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Toast } from '@/components/ui/Toast';
-import { ScrapedVehicleForm } from '@/components/forms/ScrapedVehicleForm';
+import { SummaryStatisticForm } from '@/components/forms/ScrapedVehicleForm';
 import { Plus, Edit, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
-import { formatCurrency, formatDateShort, handleError } from '@/lib/utils';
+import { formatCurrency, handleError } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 
-export default function ScrapedVehiclesPage() {
+export default function SummaryStatisticsPage() {
   const { user } = useAuth();
-  const [vehicles, setVehicles] = useState<ScrapedVehicle[]>([]);
+  const [records, setRecords] = useState<SummaryStatistic[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   // Filter states
   const [manufacturers, setManufacturers] = useState<string[]>([]);
   const [models, setModels] = useState<string[]>([]);
-  const [years, setYears] = useState<number[]>([]);
+  const [years, setYears] = useState<string[]>([]);
 
-  const [selectedType, setSelectedType] = useState<string>('');
   const [selectedManufacturer, setSelectedManufacturer] = useState<string>('');
   const [selectedModel, setSelectedModel] = useState<string>('');
   const [selectedYear, setSelectedYear] = useState<string>('');
+  const [selectedTransmission, setSelectedTransmission] = useState<string>('');
+  const [selectedFuelType, setSelectedFuelType] = useState<string>('');
 
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
-  const [totalVehicles, setTotalVehicles] = useState(0);
+  const [totalRecords, setTotalRecords] = useState(0);
   const itemsPerPage = 20;
 
   // Form states
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [formMode, setFormMode] = useState<'create' | 'edit'>('create');
-  const [selectedVehicle, setSelectedVehicle] = useState<ScrapedVehicle | undefined>();
+  const [selectedRecord, setSelectedRecord] = useState<SummaryStatistic | undefined>();
 
   // Delete confirmation states
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [vehicleToDelete, setVehicleToDelete] = useState<ScrapedVehicle | null>(null);
+  const [recordToDelete, setRecordToDelete] = useState<SummaryStatistic | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
   // Toast states
@@ -48,7 +49,7 @@ export default function ScrapedVehiclesPage() {
     if (user?.role === 'admin') {
       fetchManufacturers();
     }
-  }, [user, selectedType]);
+  }, [user]);
 
   useEffect(() => {
     if (selectedManufacturer) {
@@ -57,7 +58,7 @@ export default function ScrapedVehiclesPage() {
       setModels([]);
       setSelectedModel('');
     }
-  }, [selectedManufacturer, selectedType]);
+  }, [selectedManufacturer]);
 
   useEffect(() => {
     if (selectedManufacturer && selectedModel) {
@@ -66,17 +67,17 @@ export default function ScrapedVehiclesPage() {
       setYears([]);
       setSelectedYear('');
     }
-  }, [selectedManufacturer, selectedModel, selectedType]);
+  }, [selectedManufacturer, selectedModel]);
 
   useEffect(() => {
     if (user?.role === 'admin') {
-      fetchVehicles();
+      fetchRecords();
     }
-  }, [selectedType, selectedManufacturer, selectedModel, selectedYear, currentPage, user]);
+  }, [selectedManufacturer, selectedModel, selectedYear, selectedTransmission, selectedFuelType, currentPage, user]);
 
   const fetchManufacturers = async () => {
     try {
-      const manufacturersData = await analyticsAPI.getManufacturers('scraped', selectedType || undefined);
+      const manufacturersData = await analyticsAPI.getManufacturers('summary');
       setManufacturers(manufacturersData.sort());
     } catch (error) {
       console.error('Failed to fetch manufacturers:', error);
@@ -87,7 +88,7 @@ export default function ScrapedVehiclesPage() {
 
   const fetchModels = async (manufacturer: string) => {
     try {
-      const modelsData = await analyticsAPI.getModels(manufacturer, 'scraped', selectedType || undefined);
+      const modelsData = await analyticsAPI.getModels(manufacturer, 'summary');
       setModels(modelsData.sort());
     } catch (error) {
       console.error('Failed to fetch models:', error);
@@ -98,8 +99,8 @@ export default function ScrapedVehiclesPage() {
 
   const fetchYears = async (manufacturer: string, model: string) => {
     try {
-      const yearsData = await analyticsAPI.getYears(manufacturer, model, 'scraped', selectedType || undefined);
-      setYears(yearsData.sort((a, b) => b - a));
+      const yearsData = await analyticsAPI.getYears(manufacturer, model, 'summary');
+      setYears(yearsData.map(String).sort((a, b) => b.localeCompare(a)));
     } catch (error) {
       console.error('Failed to fetch years:', error);
       const errorMessage = handleError(error);
@@ -117,7 +118,7 @@ export default function ScrapedVehiclesPage() {
     }
   };
 
-  const fetchVehicles = async () => {
+  const fetchRecords = async () => {
     try {
       setIsLoading(true);
       const skip = (currentPage - 1) * itemsPerPage;
@@ -126,45 +127,55 @@ export default function ScrapedVehiclesPage() {
         limit: itemsPerPage,
       };
 
-      if (selectedType) params.vehicle_type = selectedType;
-      if (selectedManufacturer) params.manufacturer = selectedManufacturer;
+      if (selectedManufacturer) params.make = selectedManufacturer;
       if (selectedModel) params.model = selectedModel;
-      if (selectedYear) params.yom = parseInt(selectedYear);
+      if (selectedYear) params.yom = selectedYear;
+      if (selectedTransmission) params.transmission = selectedTransmission;
+      if (selectedFuelType) params.fuel_type = selectedFuelType;
 
-      const data = await scrapedVehiclesAPI.getAll(params);
-      setVehicles(data);
-      setTotalVehicles(data.length < itemsPerPage ? skip + data.length : skip + itemsPerPage + 1);
+      const data = await summaryStatisticsAPI.getAll(params);
+      setRecords(data);
+      setTotalRecords(data.length < itemsPerPage ? skip + data.length : skip + itemsPerPage + 1);
     } catch (error) {
-      console.error('Failed to fetch vehicles:', error);
+      console.error('Failed to fetch records:', error);
       const errorMessage = handleError(error);
       setToast({ message: errorMessage, type: 'error' });
-      setVehicles([]);
-      setTotalVehicles(0);
+      setRecords([]);
+      setTotalRecords(0);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleCreate = async (data: ScrapedVehicleCreate) => {
+  const handleCreate = async (data: SummaryStatisticCreate) => {
     try {
-      await scrapedVehiclesAPI.create(data);
-      setToast({ message: 'Vehicle added successfully!', type: 'success' });
+      await summaryStatisticsAPI.create(data);
+      setToast({ message: 'Summary statistic added successfully!', type: 'success' });
       setCurrentPage(1);
       fetchDropdownData();
-      fetchVehicles();
+      fetchRecords();
       setIsFormOpen(false);
     } catch (error) {
       throw error;
     }
   };
 
-  const handleUpdate = async (data: ScrapedVehicleUpdate) => {
-    if (!selectedVehicle) return;
+  const handleUpdate = async (data: SummaryStatisticUpdate) => {
+    if (!selectedRecord) return;
     try {
-      await scrapedVehiclesAPI.update(selectedVehicle.id, data);
-      setToast({ message: 'Vehicle updated successfully!', type: 'success' });
+      await summaryStatisticsAPI.update(
+        {
+          make: selectedRecord.make,
+          model: selectedRecord.model,
+          yom: selectedRecord.yom,
+          transmission: selectedRecord.transmission,
+          fuel_type: selectedRecord.fuel_type,
+        },
+        data
+      );
+      setToast({ message: 'Summary statistic updated successfully!', type: 'success' });
       fetchDropdownData();
-      fetchVehicles();
+      fetchRecords();
       setIsFormOpen(false);
     } catch (error) {
       throw error;
@@ -172,15 +183,21 @@ export default function ScrapedVehiclesPage() {
   };
 
   const handleDelete = async () => {
-    if (!vehicleToDelete) return;
+    if (!recordToDelete) return;
     try {
       setIsDeleting(true);
-      await scrapedVehiclesAPI.delete(vehicleToDelete.id);
-      setToast({ message: 'Vehicle deleted successfully!', type: 'success' });
+      await summaryStatisticsAPI.delete({
+        make: recordToDelete.make,
+        model: recordToDelete.model,
+        yom: recordToDelete.yom,
+        transmission: recordToDelete.transmission,
+        fuel_type: recordToDelete.fuel_type,
+      });
+      setToast({ message: 'Summary statistic deleted successfully!', type: 'success' });
       fetchDropdownData();
-      fetchVehicles();
+      fetchRecords();
       setIsDeleteDialogOpen(false);
-      setVehicleToDelete(null);
+      setRecordToDelete(null);
     } catch (error) {
       setToast({ message: handleError(error), type: 'error' });
     } finally {
@@ -188,48 +205,50 @@ export default function ScrapedVehiclesPage() {
     }
   };
 
-  const handleFormSubmit = async (data: ScrapedVehicleCreate | ScrapedVehicleUpdate) => {
+  const handleFormSubmit = async (data: SummaryStatisticCreate | SummaryStatisticUpdate) => {
     if (formMode === 'create') {
-      await handleCreate(data as ScrapedVehicleCreate);
+      await handleCreate(data as SummaryStatisticCreate);
     } else {
-      await handleUpdate(data as ScrapedVehicleUpdate);
+      await handleUpdate(data as SummaryStatisticUpdate);
     }
   };
 
   const handleFilterChange = (
-    type: 'type' | 'manufacturer' | 'model' | 'year',
+    type: 'manufacturer' | 'model' | 'year' | 'transmission' | 'fuel_type',
     value: string
   ) => {
     setCurrentPage(1);
-    if (type === 'type') {
-      setSelectedType(value);
-    } else if (type === 'manufacturer') {
+    if (type === 'manufacturer') {
       setSelectedManufacturer(value);
     } else if (type === 'model') {
       setSelectedModel(value);
-    } else {
+    } else if (type === 'year') {
       setSelectedYear(value);
+    } else if (type === 'transmission') {
+      setSelectedTransmission(value);
+    } else if (type === 'fuel_type') {
+      setSelectedFuelType(value);
     }
   };
 
   const openCreateForm = () => {
     setFormMode('create');
-    setSelectedVehicle(undefined);
+    setSelectedRecord(undefined);
     setIsFormOpen(true);
   };
 
-  const openEditForm = (vehicle: ScrapedVehicle) => {
+  const openEditForm = (record: SummaryStatistic) => {
     setFormMode('edit');
-    setSelectedVehicle(vehicle);
+    setSelectedRecord(record);
     setIsFormOpen(true);
   };
 
-  const openDeleteDialog = (vehicle: ScrapedVehicle) => {
-    setVehicleToDelete(vehicle);
+  const openDeleteDialog = (record: SummaryStatistic) => {
+    setRecordToDelete(record);
     setIsDeleteDialogOpen(true);
   };
 
-  const totalPages = Math.ceil(totalVehicles / itemsPerPage);
+  const totalPages = Math.ceil(totalRecords / itemsPerPage);
 
   if (user?.role !== 'admin') {
     return (
@@ -256,46 +275,30 @@ export default function ScrapedVehiclesPage() {
 
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Scraped Vehicles</h1>
+          <h1 className="text-3xl font-bold text-gray-900">Summary Statistics</h1>
           <p className="text-sm text-gray-600 mt-1">
-            Admin only - Manage scraped vehicle data with price history
+            Admin only - Manage pre-computed average price statistics
           </p>
         </div>
         <Button onClick={openCreateForm}>
           <Plus className="h-4 w-4 mr-2" />
-          Add Vehicle
+          Add Record
         </Button>
       </div>
 
       {/* Filter Dropdowns */}
-      <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
-        {/* Type Filter */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Type
-          </label>
-          <select
-            value={selectedType}
-            onChange={(e) => handleFilterChange('type', e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          >
-            <option value="">All Types</option>
-            <option value="REGISTERED">Registered</option>
-            <option value="UNREGISTERED">Unregistered</option>
-          </select>
-        </div>
-
+      <div className="mb-6 grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
         {/* Manufacturer Filter */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Manufacturer
+            Make
           </label>
           <select
             value={selectedManufacturer}
             onChange={(e) => handleFilterChange('manufacturer', e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           >
-            <option value="">All Manufacturers</option>
+            <option value="">All Makes</option>
             {manufacturers.map((manufacturer) => (
               <option key={manufacturer} value={manufacturer}>
                 {manufacturer}
@@ -316,7 +319,7 @@ export default function ScrapedVehiclesPage() {
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
           >
             <option value="">
-              {selectedManufacturer ? 'All Models' : 'Select Manufacturer First'}
+              {selectedManufacturer ? 'All Models' : 'Select Make First'}
             </option>
             {models.map((model) => (
               <option key={model} value={model}>
@@ -329,7 +332,7 @@ export default function ScrapedVehiclesPage() {
         {/* Year Filter */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Year
+            YOM
           </label>
           <select
             value={selectedYear}
@@ -341,10 +344,45 @@ export default function ScrapedVehiclesPage() {
               {selectedModel ? 'All Years' : 'Select Model First'}
             </option>
             {years.map((year) => (
-              <option key={year} value={year.toString()}>
+              <option key={year} value={year}>
                 {year}
               </option>
             ))}
+          </select>
+        </div>
+
+        {/* Transmission Filter */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Transmission
+          </label>
+          <select
+            value={selectedTransmission}
+            onChange={(e) => handleFilterChange('transmission', e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          >
+            <option value="">All</option>
+            <option value="Automatic">Automatic</option>
+            <option value="Manual">Manual</option>
+            <option value="CVT">CVT</option>
+          </select>
+        </div>
+
+        {/* Fuel Type Filter */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Fuel Type
+          </label>
+          <select
+            value={selectedFuelType}
+            onChange={(e) => handleFilterChange('fuel_type', e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          >
+            <option value="">All</option>
+            <option value="Petrol">Petrol</option>
+            <option value="Diesel">Diesel</option>
+            <option value="Hybrid">Hybrid</option>
+            <option value="Electric">Electric</option>
           </select>
         </div>
       </div>
@@ -356,16 +394,13 @@ export default function ScrapedVehiclesPage() {
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Type
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Manufacturer
+                  Make
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Model
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Year
+                  YOM
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Transmission
@@ -374,13 +409,10 @@ export default function ScrapedVehiclesPage() {
                   Fuel Type
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Mileage
+                  Average Price
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Price
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Last Updated
+                  Updated Date
                 </th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Actions
@@ -388,58 +420,46 @@ export default function ScrapedVehiclesPage() {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {vehicles.length === 0 ? (
+              {records.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-6 py-4 text-center text-gray-500">
-                    No vehicles found matching the selected filters.
+                  <td colSpan={8} className="px-6 py-4 text-center text-gray-500">
+                    No records found matching the selected filters.
                   </td>
                 </tr>
               ) : (
-                vehicles.map((vehicle) => (
-                  <tr key={vehicle.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      <span className={`px-2 py-1 text-xs rounded-full ${
-                        vehicle.type === 'REGISTERED'
-                          ? 'bg-green-100 text-green-800'
-                          : 'bg-blue-100 text-blue-800'
-                      }`}>
-                        {vehicle.type}
-                      </span>
-                    </td>
+                records.map((record, index) => (
+                  <tr key={`${record.make}-${record.model}-${record.yom}-${record.transmission}-${record.fuel_type}`} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      {vehicle.manufacturer}
+                      {record.make}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {vehicle.model}
+                      {record.model}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {vehicle.yom}
+                      {record.yom}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {vehicle.transmission || '-'}
+                      {record.transmission || '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {vehicle.fuel_type || '-'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {vehicle.mileage ? `${vehicle.mileage.toLocaleString()} km` : '-'}
+                      {record.fuel_type || '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {formatCurrency(vehicle.price)}
+                      {formatCurrency(record.average_price)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {formatDateShort(vehicle.updated_date)}
+                      {record.updated_date || '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                       <button
-                        onClick={() => openEditForm(vehicle)}
+                        onClick={() => openEditForm(record)}
                         className="text-blue-600 hover:text-blue-900 mr-3"
                         title="Edit"
                       >
                         <Edit className="h-4 w-4" />
                       </button>
                       <button
-                        onClick={() => openDeleteDialog(vehicle)}
+                        onClick={() => openDeleteDialog(record)}
                         className="text-red-600 hover:text-red-900"
                         title="Delete"
                       >
@@ -457,8 +477,8 @@ export default function ScrapedVehiclesPage() {
       {/* Pagination */}
       <div className="mt-4 flex items-center justify-between">
         <div className="text-sm text-gray-600">
-          Showing {vehicles.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0} to{' '}
-          {Math.min(currentPage * itemsPerPage, totalVehicles)} of {totalVehicles} vehicles
+          Showing {records.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0} to{' '}
+          {Math.min(currentPage * itemsPerPage, totalRecords)} of {totalRecords} records
         </div>
         <div className="flex gap-2">
           <Button
@@ -475,7 +495,7 @@ export default function ScrapedVehiclesPage() {
           </div>
           <Button
             onClick={() => setCurrentPage((prev) => prev + 1)}
-            disabled={currentPage >= totalPages || vehicles.length < itemsPerPage}
+            disabled={currentPage >= totalPages || records.length < itemsPerPage}
             variant="secondary"
             size="sm"
           >
@@ -486,11 +506,11 @@ export default function ScrapedVehiclesPage() {
       </div>
 
       {/* Create/Edit Form */}
-      <ScrapedVehicleForm
+      <SummaryStatisticForm
         isOpen={isFormOpen}
         onClose={() => setIsFormOpen(false)}
         onSubmit={handleFormSubmit}
-        vehicle={selectedVehicle}
+        record={selectedRecord}
         mode={formMode}
       />
 
@@ -499,8 +519,8 @@ export default function ScrapedVehiclesPage() {
         isOpen={isDeleteDialogOpen}
         onClose={() => setIsDeleteDialogOpen(false)}
         onConfirm={handleDelete}
-        title="Delete Vehicle"
-        message={`Are you sure you want to delete ${vehicleToDelete?.manufacturer} ${vehicleToDelete?.model} (${vehicleToDelete?.yom})? This action cannot be undone.`}
+        title="Delete Summary Statistic"
+        message={`Are you sure you want to delete ${recordToDelete?.make} ${recordToDelete?.model} (${recordToDelete?.yom})? This action cannot be undone.`}
         confirmText="Delete"
         variant="danger"
         isLoading={isDeleting}

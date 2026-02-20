@@ -27,7 +27,7 @@ logger = get_logger(__name__)
 # =============================================================================
 # TESTING CONFIGURATION - Comment out or set to None for production
 # =============================================================================
-TEST_LINK_LIMIT = 50  # Set to None to process all links
+TEST_LINK_LIMIT = None  # Set to None to process all links
 # =============================================================================
 
 # Key mapping for Ikman data normalization

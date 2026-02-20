@@ -149,7 +149,8 @@ TABLE_SCHEMAS = {
         "yom VARCHAR(255)",
         "transmission VARCHAR(255)",
         "fuel_type VARCHAR(255)",
-        "average_price FLOAT"
+        "average_price FLOAT",
+        "updated_date VARCHAR(255)"
     ]
 }
 

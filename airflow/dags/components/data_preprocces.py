@@ -12,7 +12,7 @@ import pandas as pd
 
 from components.logging_config import get_logger, TaskLogger
 from components.config import stats_config, TABLE_SCHEMAS
-from components.utils import create_table, populate_table, read_table
+from components.utils import create_table, populate_table, read_table, ensure_table_exists
 
 logger = get_logger(__name__)
 
@@ -77,12 +77,19 @@ def clean_model_redundancy(row: pd.Series) -> str:
     make = str(row['make']).strip().lower()
     model_str = str(row['model']).strip().lower()
 
+    try:
+        year_int = int(row['yom'])
+        year_str = str(year_int)
+    except:
+        year_str = str(row['yom']).strip()
+    
     words = model_str.split()
     cleaned_words = []
     seen = set()
-
+        
     for word in words:
-        if word != make and word not in seen:
+        # Skip if word is brand OR a repeat OR if word equals the year
+        if word != make and word not in seen and word != year_str:
             cleaned_words.append(word)
             seen.add(word)
 
@@ -101,6 +108,20 @@ def check_ceiling(row: pd.Series, value_col: str = 'Fixed_value') -> bool:
         return True
     except (ValueError, KeyError):
         return True
+
+ # B. Apply Year-based Ceilings
+def check_ceiling_raw(row):
+    year = int(row['yom'])
+    price = float(row['vehicle_price'])
+    
+    if year >= 2015 and price > 30000000:
+        return False
+    if 2005 <= year < 2015 and price > 25000000:
+        return False
+    if 2000 <= year < 2005 and price > 20000000:
+        return False
+    
+    return True
 
 
 # ============================================================================
@@ -452,6 +473,29 @@ def group_and_aggregate(input_table: str, output_table: str, **kwargs) -> int:
             logger.warning(f"No data found in {input_table}")
             return 0
 
+        if len(df) > 0:
+            logger.info("\n--- Applying Price Ceiling Logic (BEFORE aggregation) ---")
+            initial_count_pre_ceiling = len(df)
+            
+            # A. Apply Floor Logic (> 2M)
+            floor_mask = df['vehicle_price'] > 2000000
+            removed_by_floor = initial_count_pre_ceiling - floor_mask.sum()
+            df = df[floor_mask].copy()
+            
+        
+            ceiling_mask = df.apply(check_ceiling_raw, axis=1)
+            removed_by_ceiling = len(df) - ceiling_mask.sum()
+            df = df[ceiling_mask].copy()
+            
+            logger.info(f"Records removed (Price < 2,000,000): {removed_by_floor}")
+            logger.info(f"Records removed (Year-based Ceilings): {removed_by_ceiling}")
+            logger.info(f"Records remaining for aggregation: {len(df)}\n")
+
+        # Check if there are still records after filtering
+        if len(df) == 0:
+            logger.warning("No records remaining after filtering for aggregation.")
+            return None
+
         cleaned_grouping_cols = [col.strip().lower() for col in stats_config.grouping_cols]
         cleaned_target_col = stats_config.target_col.strip().lower()
 
@@ -629,10 +673,14 @@ def save_summary_statistics(input_table: str, output_table: str, **kwargs) -> in
 
         # Rename and select final columns
         df = df.rename(columns={'fixed_value': 'average_price'})
-        df = df[['make', 'model', 'yom', 'transmission', 'fuel_type', 'average_price']]
 
-        # Create and populate summary table
-        create_table(output_table, TABLE_SCHEMAS['summary_statistics'])
+        # Add updated_date column with current date
+        df['updated_date'] = datetime.now().strftime('%Y/%m/%d')
+
+        df = df[['make', 'model', 'yom', 'transmission', 'fuel_type', 'average_price', 'updated_date']]
+
+        # Ensure summary table exists (preserves historical data)
+        ensure_table_exists(output_table, TABLE_SCHEMAS['summary_statistics'])
 
         for _, row in df.iterrows():
             populate_table(output_table, row.to_dict())

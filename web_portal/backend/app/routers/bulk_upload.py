@@ -5,7 +5,7 @@ from typing import List, Dict, Any
 from datetime import datetime
 from ..database import get_db
 from ..models.user import User
-from ..models.vehicle import FastMovingVehicle, ScrapedVehicle
+from ..models.vehicle import FastMovingVehicle
 from ..models.mapping import ERPModelMapping
 from ..models.audit import AuditLog
 from ..middleware.auth import require_role
@@ -70,38 +70,6 @@ def validate_and_prepare_fast_moving_vehicle(data: Dict[str, Any], row_num: int)
     return prepared, []
 
 
-def validate_and_prepare_scraped_vehicle(data: Dict[str, Any], row_num: int) -> tuple:
-    """Validate and prepare scraped vehicle data."""
-    errors = []
-
-    # Required fields
-    required_fields = ['type', 'manufacturer', 'model', 'yom']
-    for field in required_fields:
-        if field not in data or not data[field]:
-            errors.append(ValidationError(
-                row=row_num,
-                column=field,
-                message=f"Missing required field: {field}"
-            ))
-
-    if errors:
-        return None, errors
-
-    # Prepare data with normalized text
-    prepared = {
-        'type': normalize_text(data.get('type')),
-        'manufacturer': normalize_text(data.get('manufacturer')),
-        'model': normalize_text(data.get('model')),
-        'yom': int(data.get('yom')),
-        'transmission': normalize_text(data.get('transmission')) if data.get('transmission') else None,
-        'fuel_type': normalize_text(data.get('fuel_type')) if data.get('fuel_type') else None,
-        'mileage': int(data.get('mileage')) if data.get('mileage') else None,
-        'price': float(data.get('price')) if data.get('price') else None,
-    }
-
-    return prepared, []
-
-
 def validate_and_prepare_erp_mapping(data: Dict[str, Any], row_num: int) -> tuple:
     """Validate and prepare ERP mapping data."""
     errors = []
@@ -141,13 +109,6 @@ def check_fast_moving_duplicate(db: Session, data: Dict[str, Any]) -> bool:
     return existing is not None
 
 
-def check_scraped_duplicate(db: Session, data: Dict[str, Any]) -> bool:
-    """Check if scraped vehicle record already exists (allow multiple entries for same vehicle)."""
-    # For scraped vehicles, we don't check for duplicates as the same vehicle
-    # can be scraped multiple times with different prices/dates
-    return False
-
-
 def check_erp_mapping_duplicate(db: Session, data: Dict[str, Any]) -> bool:
     """Check if ERP mapping already exists."""
     existing = db.query(ERPModelMapping).filter(
@@ -168,7 +129,6 @@ async def bulk_upload(
 
     Supports:
     - fast_moving_vehicles
-    - scraped_vehicles
     - erp_model_mappings
 
     Features:
@@ -192,10 +152,6 @@ async def bulk_upload(
         model_class = FastMovingVehicle
         validate_func = validate_and_prepare_fast_moving_vehicle
         check_duplicate_func = check_fast_moving_duplicate
-    elif table_name == "scraped_vehicles":
-        model_class = ScrapedVehicle
-        validate_func = validate_and_prepare_scraped_vehicle
-        check_duplicate_func = check_scraped_duplicate
     elif table_name == "erp_model_mappings":
         model_class = ERPModelMapping
         validate_func = validate_and_prepare_erp_mapping

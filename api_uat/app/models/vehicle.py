@@ -1,34 +1,26 @@
 """
-SQLAlchemy models for vehicle-related tables.
-Maps to scraped_vehicles table in the database.
+SQLAlchemy model for summary statistics table.
+Maps to summery_statistics_table created by the Master DB Creation Pipeline.
 """
-from sqlalchemy import Column, Integer, String, DateTime, DECIMAL, Index
-from sqlalchemy.sql import func
+from sqlalchemy import Column, String, Float
 from app.database import Base
 
 
-class ScrapedVehicle(Base):
+class SummaryStatistic(Base):
     """
-    Model for scraped vehicles data from web scraping.
-    Used for price estimation and market analysis.
+    Model for pre-computed vehicle price summary statistics.
+    Created by Airflow's Master_DB_Creation_Pipeline DAG.
+    Groups by (make, model, yom, transmission, fuel_type) with average_price.
     """
-    __tablename__ = "scraped_vehicles"
+    __tablename__ = "summery_statistics_table"
 
-    id = Column(Integer, primary_key=True, index=True)
-    manufacturer = Column(String(100), nullable=False, index=True)
-    type = Column(String(100), nullable=False, index=True)  # Registered/Unregistered
-    model = Column(String(100), nullable=False, index=True)
-    yom = Column(Integer, nullable=False, index=True)  # Year of manufacture
-    transmission = Column(String(50))
-    fuel_type = Column(String(50))
-    mileage = Column(Integer)
-    price = Column(DECIMAL(15, 2))
-    updated_date = Column(DateTime(timezone=True), server_default=func.now())
-
-    # Composite index for efficient price queries
-    __table_args__ = (
-        Index('idx_scraped_price_lookup', 'manufacturer', 'model', 'type', 'yom'),
-    )
+    make = Column(String(255), primary_key=True)
+    model = Column(String(255), primary_key=True)
+    yom = Column(String(255), primary_key=True)
+    transmission = Column(String(255), primary_key=True)
+    fuel_type = Column(String(255), primary_key=True)
+    average_price = Column(Float)
+    updated_date = Column(String(255))
 
     def __repr__(self):
-        return f"<ScrapedVehicle(id={self.id}, make={self.manufacturer}, model={self.model}, yom={self.yom}, price={self.price})>"
+        return f"<SummaryStatistic(make={self.make}, model={self.model}, yom={self.yom}, price={self.average_price})>"

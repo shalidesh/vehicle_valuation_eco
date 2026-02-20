@@ -117,42 +117,6 @@ def load_fast_moving_vehicles(engine, csv_path):
     return len(df_to_load)
 
 
-def load_scraped_vehicles(engine, csv_path):
-    """Load scraped vehicles data from CSV."""
-    print("\nLoading Scraped Vehicles data...")
-
-    df = pd.read_csv(csv_path)
-    print(f"  Found {len(df)} records in {csv_path.name}")
-
-    # Clear existing data
-    with engine.connect() as conn:
-        conn.execute(text("TRUNCATE TABLE scraped_vehicles RESTART IDENTITY CASCADE"))
-        conn.commit()
-
-    # Prepare data
-    df_to_load = df[['manufacturer', 'type', 'model', 'yom', 'transmission', 'fuel_type', 'mileage', 'price']].copy()
-
-    # Clean up leading/trailing spaces from string columns
-    string_columns = ['manufacturer', 'type', 'model', 'transmission', 'fuel_type']
-    for col in string_columns:
-        if col in df_to_load.columns:
-            df_to_load[col] = df_to_load[col].astype(str).str.strip()
-
-    # Convert date_posted to updated_date if exists
-    if 'date_posted' in df.columns:
-        df['updated_date'] = pd.to_datetime(df['date_posted'])
-        df_to_load['updated_date'] = df['updated_date']
-
-    # Clean up data
-    df_to_load['mileage'] = df_to_load['mileage'].fillna(0).astype(int)
-
-    # Pass engine directly to to_sql for pandas compatibility
-    df_to_load.to_sql('scraped_vehicles', engine, if_exists='append', index=False, method='multi', chunksize=1000)
-
-    print(f"  ✓ Loaded {len(df_to_load)} records into scraped_vehicles")
-    return len(df_to_load)
-
-
 def load_default_users(engine):
     """Load default users into the database."""
     print("\nLoading default users...")
@@ -227,7 +191,6 @@ def cleanup_trailing_spaces(engine):
     tables_to_clean = {
         'erp_model_mapping': ['manufacturer', 'erp_name', 'mapped_name'],
         'fast_moving_vehicles': ['type', 'manufacturer', 'model'],
-        'scraped_vehicles': ['manufacturer', 'type', 'model', 'transmission', 'fuel_type']
     }
 
     total_updates = 0
@@ -283,7 +246,6 @@ def load_csv_data(database_url):
     csv_files = {
         'erp_model_mapping': base_path / 'model_mapped.csv',
         'fast_moving_vehicles': base_path / 'vehicle_fast_moving_update.csv',
-        'scraped_vehicles': base_path / 'master_table_scraped.csv'
     }
     print(f"CSV file paths: {csv_files}")
 
@@ -303,11 +265,6 @@ def load_csv_data(database_url):
             total_records += load_fast_moving_vehicles(engine, csv_files['fast_moving_vehicles'])
         else:
             print(f"\n  WARNING: {csv_files['fast_moving_vehicles'].name} not found, skipping")
-
-        if csv_files['scraped_vehicles'].exists():
-            total_records += load_scraped_vehicles(engine, csv_files['scraped_vehicles'])
-        else:
-            print(f"\n  WARNING: {csv_files['scraped_vehicles'].name} not found, skipping")
 
         print("\n" + "=" * 50)
         print(f"✓ CSV data loading complete!")

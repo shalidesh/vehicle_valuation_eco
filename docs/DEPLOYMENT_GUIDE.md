@@ -10,7 +10,8 @@ This guide provides step-by-step instructions for deploying the CDB Vehicle Valu
 Internet → Nginx (Port 80/443)
             ├── / → Frontend (Next.js)
             ├── /backend/ → Backend API (FastAPI)
-            └── /api/ → Valuation Engine (AI Service)
+            ├── /api/ → Valuation Engine (Production AI Service)
+            └── /api/uat/ → Valuation Engine UAT (UAT AI Service)
                          ↓
                     PostgreSQL Database
 ```
@@ -143,7 +144,8 @@ docker ps
 # Test endpoints
 curl http://localhost/health                    # Nginx health
 curl http://localhost/backend/health            # Backend health
-curl http://localhost/api/health                # Valuation engine health
+curl http://localhost/api/health                # Valuation engine health (Production)
+curl http://localhost/api/uat/health            # Valuation engine health (UAT)
 
 # Access services:
 # - Web Portal: http://your-server-ip
@@ -230,6 +232,7 @@ docker-compose -f docker-compose.prod.yml logs -f
 # Specific service
 docker-compose -f docker-compose.prod.yml logs -f backend
 docker-compose -f docker-compose.prod.yml logs -f valuation_engine
+docker-compose -f docker-compose.prod.yml logs -f valuation_engine_uat
 ```
 
 ### Restart Services
@@ -380,10 +383,15 @@ After deployment, the following endpoints will be available:
 - **Analytics**: `http://your-server/backend/analytics/`
 - **Mapping**: `http://your-server/backend/mapping/`
 
-### Valuation Engine (AI Service)
+### Valuation Engine - Production (AI Service)
 - **API Root**: `http://your-server/api/`
-- **Predict Endpoint**: `http://localhost:8443/api/predict` (via Nginx proxy)
+- **Predict Endpoint**: `http://your-server/api/predict`
 - **Health Check**: `http://your-server/api/health`
+
+### Valuation Engine - UAT (AI Service)
+- **API Root**: `http://your-server/api/uat/`
+- **Predict Endpoint**: `http://your-server/api/uat/predict`
+- **Health Check**: `http://your-server/api/uat/health`
 
 ## Production Best Practices
 

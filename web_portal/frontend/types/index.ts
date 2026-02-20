@@ -47,39 +47,29 @@ export interface FastMovingVehicleUpdate {
   date?: string;  // User-specified date when price was recorded
 }
 
-export interface ScrapedVehicle {
-  id: number;
-  type: string;  // Registered or Unregistered
-  manufacturer: string;
+export interface SummaryStatistic {
+  make: string;
   model: string;
-  yom: number;
-  transmission: string | null;
-  fuel_type: string | null;
-  mileage: number | null;
-  price: number | null;
-  updated_date: string;
+  yom: string;
+  transmission: string;
+  fuel_type: string;
+  average_price: number | null;
+  updated_date: string | null;
 }
 
-export interface ScrapedVehicleCreate {
-  type: string;  // Registered or Unregistered
-  manufacturer: string;
+export interface SummaryStatisticCreate {
+  make: string;
   model: string;
-  yom: number;
-  transmission?: string | null;
-  fuel_type?: string | null;
-  mileage?: number | null;
-  price?: number | null;
+  yom: string;
+  transmission: string;
+  fuel_type: string;
+  average_price?: number | null;
+  updated_date?: string | null;
 }
 
-export interface ScrapedVehicleUpdate {
-  type?: string;  // Registered or Unregistered
-  manufacturer?: string;
-  model?: string;
-  yom?: number;
-  transmission?: string | null;
-  fuel_type?: string | null;
-  mileage?: number | null;
-  price?: number | null;
+export interface SummaryStatisticUpdate {
+  average_price?: number | null;
+  updated_date?: string | null;
 }
 
 export interface ERPModelMapping {
@@ -105,7 +95,7 @@ export interface ERPModelMappingUpdate {
 
 export interface DashboardStats {
   total_fast_moving: number;
-  total_scraped: number;
+  total_summary_statistics: number;
   total_mappings: number;
   recent_updates_count: number;
   total_users: number;

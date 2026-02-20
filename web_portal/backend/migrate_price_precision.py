@@ -14,10 +14,6 @@ def migrate_price_precision():
             "table": "fast_moving_vehicles",
             "query": "ALTER TABLE fast_moving_vehicles ALTER COLUMN price TYPE NUMERIC(15, 2);"
         },
-        {
-            "table": "scraped_vehicles",
-            "query": "ALTER TABLE scraped_vehicles ALTER COLUMN price TYPE NUMERIC(15, 2);"
-        }
     ]
 
     with engine.connect() as conn:

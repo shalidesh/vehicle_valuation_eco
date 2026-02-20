@@ -3,9 +3,9 @@ from .vehicle import (
     FastMovingVehicleCreate,
     FastMovingVehicleUpdate,
     FastMovingVehicleResponse,
-    ScrapedVehicleCreate,
-    ScrapedVehicleUpdate,
-    ScrapedVehicleResponse,
+    SummaryStatisticCreate,
+    SummaryStatisticUpdate,
+    SummaryStatisticResponse,
 )
 from .mapping import ERPModelMappingCreate, ERPModelMappingUpdate, ERPModelMappingResponse
 
@@ -17,9 +17,9 @@ __all__ = [
     "FastMovingVehicleCreate",
     "FastMovingVehicleUpdate",
     "FastMovingVehicleResponse",
-    "ScrapedVehicleCreate",
-    "ScrapedVehicleUpdate",
-    "ScrapedVehicleResponse",
+    "SummaryStatisticCreate",
+    "SummaryStatisticUpdate",
+    "SummaryStatisticResponse",
     "ERPModelMappingCreate",
     "ERPModelMappingUpdate",
     "ERPModelMappingResponse",

@@ -40,17 +40,17 @@ export default function DashboardPage() {
       color: 'bg-blue-500',
     },
     {
-      title: 'Scraped Vehicles',
-      value: stats?.total_scraped || 0,
+      title: 'Summary Statistics',
+      value: stats?.total_summary_statistics || 0,
       icon: Database,
       color: 'bg-green-500',
     },
-    {
-      title: 'ERP Mappings',
-      value: stats?.total_mappings || 0,
-      icon: GitBranch,
-      color: 'bg-purple-500',
-    },
+    // {
+    //   title: 'ERP Mappings',
+    //   value: stats?.total_mappings || 0,
+    //   icon: GitBranch,
+    //   color: 'bg-purple-500',
+    // },
     {
       title: 'Total Users',
       value: stats?.total_users || 0,
@@ -98,8 +98,8 @@ export default function DashboardPage() {
         </p>
         <ul className="list-disc list-inside space-y-2 text-gray-700">
           <li>Manage fast-moving vehicle inventory</li>
-          <li>View and update scraped vehicle data (Admin only)</li>
-          <li>Configure ERP model name mappings (Admin only)</li>
+          <li>View and manage summary statistics data (Admin only)</li>
+          {/* <li>Configure ERP model name mappings (Admin only)</li> */}
           <li>Analyze vehicle price movements and trends</li>
           <li>Track all changes with comprehensive audit logging</li>
         </ul>

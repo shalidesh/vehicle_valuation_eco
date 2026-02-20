@@ -10,7 +10,7 @@ sys.path.append(str(Path(__file__).parent))
 
 from app.database import SessionLocal, engine, Base
 from app.models.user import User, UserRole
-from app.models.vehicle import FastMovingVehicle, ScrapedVehicle
+from app.models.vehicle import FastMovingVehicle
 from app.models.mapping import ERPModelMapping
 from app.services.auth import get_password_hash
 from decimal import Decimal
@@ -163,94 +163,6 @@ def seed_fast_moving_vehicles(db):
         db.rollback()
 
 
-def seed_scraped_vehicles(db):
-    """Import scraped vehicle records from CSV file."""
-    print("Importing scraped vehicles from CSV...")
-
-    csv_path = "postgres/master_table_scraped.csv"
-
-    # Check if file exists
-    if not Path(csv_path).exists():
-        print(f"Warning: CSV file not found at {csv_path}")
-        print("Skipping scraped vehicles import.")
-        return
-
-    vehicles_added = 0
-    vehicles_skipped = 0
-
-    try:
-        with open(csv_path, 'r', encoding='utf-8') as file:
-            csv_reader = csv.DictReader(file)
-
-            for row in csv_reader:
-                try:
-                    # Parse date
-                    date_obj = parse_date(row['date_posted'])
-                    if not date_obj:
-                        vehicles_skipped += 1
-                        continue
-
-                    # Parse numeric fields
-                    yom = int(row['yom']) if row['yom'] else None
-                    if not yom:
-                        vehicles_skipped += 1
-                        continue
-
-                    mileage = int(row['mileage']) if row['mileage'] and row['mileage'].strip() else None
-                    price = float(row['price']) if row['price'] and row['price'].strip() else None
-
-                    # Create vehicle record
-                    vehicle = ScrapedVehicle(
-                        type=row['type'],
-                        manufacturer=row['manufacturer'],
-                        model=row['model'],
-                        yom=yom,
-                        transmission=row['transmission'] if row['transmission'] else None,
-                        fuel_type=row['fuel_type'] if row['fuel_type'] else None,
-                        mileage=mileage,
-                        price=Decimal(str(price)) if price else None,
-                        updated_date=date_obj
-                    )
-
-                    db.add(vehicle)
-                    vehicles_added += 1
-
-                    # Commit in batches of 100 for better performance
-                    if vehicles_added % 100 == 0:
-                        try:
-                            db.commit()
-                            print(f"  Committed {vehicles_added} records...")
-                        except Exception as batch_error:
-                            print(f"  Error committing batch at record {vehicles_added}: {batch_error}")
-                            db.rollback()
-                            # Continue with next batch
-                            vehicles_skipped += 1
-
-                except Exception as e:
-                    print(f"  Error processing row: {row}")
-                    print(f"  Error: {e}")
-                    vehicles_skipped += 1
-                    db.rollback()
-                    continue
-
-            # Commit remaining records
-            try:
-                db.commit()
-            except Exception as final_error:
-                print(f"  Error committing final batch: {final_error}")
-                db.rollback()
-
-        print(f"Imported {vehicles_added} scraped vehicles from CSV")
-        if vehicles_skipped > 0:
-            print(f"Skipped {vehicles_skipped} records due to errors")
-
-    except FileNotFoundError:
-        print(f"Error: CSV file not found at {csv_path}")
-    except Exception as e:
-        print(f"Error reading CSV file: {e}")
-        db.rollback()
-
-
 def seed_erp_mappings(db):
     """Create sample ERP model mappings."""
     print("Creating ERP mappings...")
@@ -318,7 +230,6 @@ def main():
         # Seed data
         seed_users(db)
         seed_fast_moving_vehicles(db)
-        seed_scraped_vehicles(db)
         seed_erp_mappings(db)
 
         print("\n" + "=" * 50)

@@ -57,28 +57,6 @@ def upgrade() -> None:
     op.create_index(op.f('ix_fast_moving_vehicles_model'), 'fast_moving_vehicles', ['model'], unique=False)
     op.create_index(op.f('ix_fast_moving_vehicles_type'), 'fast_moving_vehicles', ['type'], unique=False)
 
-    # Create scraped_vehicles table
-    op.create_table(
-        'scraped_vehicles',
-        sa.Column('id', sa.Integer(), nullable=False),
-        sa.Column('manufacturer', sa.String(length=100), nullable=False),
-        sa.Column('type', sa.String(length=100), nullable=False),
-        sa.Column('model', sa.String(length=100), nullable=False),
-        sa.Column('yom', sa.Integer(), nullable=False),
-        sa.Column('transmission', sa.String(length=50), nullable=True),
-        sa.Column('fuel_type', sa.String(length=50), nullable=True),
-        sa.Column('mileage', sa.Integer(), nullable=True),
-        sa.Column('price', sa.DECIMAL(precision=15, scale=2), nullable=True),
-        sa.Column('updated_date', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
-        sa.PrimaryKeyConstraint('id')
-    )
-    op.create_index('idx_scraped_price_movement', 'scraped_vehicles', ['manufacturer', 'model', 'type', 'yom', 'updated_date'], unique=False)
-    op.create_index(op.f('ix_scraped_vehicles_id'), 'scraped_vehicles', ['id'], unique=False)
-    op.create_index(op.f('ix_scraped_vehicles_manufacturer'), 'scraped_vehicles', ['manufacturer'], unique=False)
-    op.create_index(op.f('ix_scraped_vehicles_model'), 'scraped_vehicles', ['model'], unique=False)
-    op.create_index(op.f('ix_scraped_vehicles_type'), 'scraped_vehicles', ['type'], unique=False)
-    op.create_index(op.f('ix_scraped_vehicles_yom'), 'scraped_vehicles', ['yom'], unique=False)
-
     # Create erp_model_mapping table
     op.create_table(
         'erp_model_mapping',
@@ -125,14 +103,6 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_erp_model_mapping_id'), table_name='erp_model_mapping')
     op.drop_index(op.f('ix_erp_model_mapping_erp_name'), table_name='erp_model_mapping')
     op.drop_table('erp_model_mapping')
-
-    op.drop_index(op.f('ix_scraped_vehicles_yom'), table_name='scraped_vehicles')
-    op.drop_index(op.f('ix_scraped_vehicles_type'), table_name='scraped_vehicles')
-    op.drop_index(op.f('ix_scraped_vehicles_model'), table_name='scraped_vehicles')
-    op.drop_index(op.f('ix_scraped_vehicles_manufacturer'), table_name='scraped_vehicles')
-    op.drop_index(op.f('ix_scraped_vehicles_id'), table_name='scraped_vehicles')
-    op.drop_index('idx_scraped_price_movement', table_name='scraped_vehicles')
-    op.drop_table('scraped_vehicles')
 
     op.drop_index(op.f('ix_fast_moving_vehicles_type'), table_name='fast_moving_vehicles')
     op.drop_index(op.f('ix_fast_moving_vehicles_model'), table_name='fast_moving_vehicles')

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, DECIMAL, ForeignKey, Index, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Float, DateTime, DECIMAL, ForeignKey, Index, UniqueConstraint
 from sqlalchemy.sql import func
 from ..database import Base
 
@@ -22,20 +22,13 @@ class FastMovingVehicle(Base):
     )
 
 
-class ScrapedVehicle(Base):
-    __tablename__ = "scraped_vehicles"
+class SummaryStatistic(Base):
+    __tablename__ = "summery_statistics_table"
 
-    id = Column(Integer, primary_key=True, index=True)
-    manufacturer = Column(String(100), nullable=False, index=True)
-    type = Column(String(100), nullable=False, index=True)
-    model = Column(String(100), nullable=False, index=True)
-    yom = Column(Integer, nullable=False, index=True)
-    transmission = Column(String(50))
-    fuel_type = Column(String(50))
-    mileage = Column(Integer)
-    price = Column(DECIMAL(15, 2))
-    updated_date = Column(DateTime(timezone=True), server_default=func.now())
-
-    __table_args__ = (
-        Index('idx_scraped_price_movement', 'manufacturer', 'model','type', 'yom', 'updated_date'),
-    )
+    make = Column(String(255), primary_key=True)
+    model = Column(String(255), primary_key=True)
+    yom = Column(String(255), primary_key=True)
+    transmission = Column(String(255), primary_key=True)
+    fuel_type = Column(String(255), primary_key=True)
+    average_price = Column(Float)
+    updated_date = Column(String(255))

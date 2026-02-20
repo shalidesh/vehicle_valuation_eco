@@ -318,6 +318,35 @@ services:
     # deploy:
     #   replicas: 2
 
+  valuation_engine_uat:
+    build:
+      context: ./api_uat
+      dockerfile: Dockerfile
+    container_name: cdb_valuation_engine_uat
+    restart: always
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres:5432/${APP_DB_NAME:-cdb_valuation_db}
+      - SECRET_KEY=${VALUATION_SECRET_KEY:-thisismynewversionscreatversion}
+      - AUTH_USERNAME=${VALUATION_USER:-cdb}
+      - AUTH_PASSWORD=${VALUATION_PASSWORD:-cdb123456}
+      - FIXED_ACCESS_TOKEN=${VALUATION_FIXED_TOKEN:-cdb_fixed_token_2024_secure_key_valuation_engine}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost,http://localhost:3000}
+      - DEBUG=false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8443/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - app_network
+    # For production scaling: uncomment below
+    deploy:
+      replicas: 1
+
 # -------------------- Frontend --------------------
   frontend:
     build:
@@ -354,6 +383,8 @@ services:
       backend:
         condition: service_healthy
       valuation_engine:
+        condition: service_healthy
+      valuation_engine_uat:
         condition: service_healthy
     networks:
       - app_network

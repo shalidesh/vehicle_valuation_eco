@@ -30,7 +30,6 @@ def cleanup_trailing_spaces(engine):
     tables_to_clean = {
         'erp_model_mapping': ['manufacturer', 'erp_name', 'mapped_name'],
         'fast_moving_vehicles': ['type', 'manufacturer', 'model'],
-        'scraped_vehicles': ['manufacturer', 'type', 'model', 'transmission', 'fuel_type']
     }
 
     total_updates = 0
@@ -135,7 +134,6 @@ def main():
     print("This script will update string columns in the following tables:")
     print("  - erp_model_mapping")
     print("  - fast_moving_vehicles")
-    print("  - scraped_vehicles")
     print()
 
     confirm = input("Do you want to continue? (yes/no): ").strip().lower()

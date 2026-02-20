@@ -25,9 +25,9 @@ interface NavItem {
 const navItems: NavItem[] = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Fast Moving Vehicles', href: '/dashboard/vehicles/fast-moving', icon: Car },
-  { name: 'Scraped Vehicles', href: '/dashboard/vehicles/scraped', icon: Database, adminOnly: true },
-  { name: 'ERP Mapping', href: '/dashboard/mapping', icon: GitBranch, adminOnly: true },
-  { name: 'Bulk Upload', href: '/dashboard/bulk-upload', icon: Upload, adminOnly: true },
+  { name: 'Summary Statistics', href: '/dashboard/vehicles/scraped', icon: Database, adminOnly: true },
+  // { name: 'ERP Mapping', href: '/dashboard/mapping', icon: GitBranch, adminOnly: true },
+  // { name: 'Bulk Upload', href: '/dashboard/bulk-upload', icon: Upload, adminOnly: true },
   { name: 'Price Analytics', href: '/dashboard/analytics', icon: TrendingUp },
 ];
 

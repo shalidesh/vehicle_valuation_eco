@@ -136,7 +136,7 @@ build:docker-images:
     # Build migrations
     - docker build -t $CI_REGISTRY_IMAGE/migrations:$IMAGE_TAG -t $CI_REGISTRY_IMAGE/migrations:latest -f web_portal/backend/Dockerfile.migrations web_portal/backend
 
-    # Build valuation engine
+    # Build valuation engine (used for both production and UAT)
     - docker build -t $CI_REGISTRY_IMAGE/valuation-engine:$IMAGE_TAG -t $CI_REGISTRY_IMAGE/valuation-engine:latest -f api_uat/Dockerfile api_uat
 
     # Push images to registry
@@ -350,6 +350,8 @@ verify:staging:
     # Health check endpoints
     - 'curl -f https://staging.vehicle-valuation.example.com/health || exit 1'
     - 'curl -f https://staging.vehicle-valuation.example.com/backend/health || exit 1'
+    - 'curl -f https://staging.vehicle-valuation.example.com/api/health || exit 1'
+    - 'curl -f https://staging.vehicle-valuation.example.com/api/uat/health || exit 1'
 
     - echo "Staging deployment verified successfully"
   only:
@@ -370,6 +372,8 @@ verify:production:
     # Health check endpoints
     - 'curl -f https://vehicle-valuation.example.com/health || exit 1'
     - 'curl -f https://vehicle-valuation.example.com/backend/health || exit 1'
+    - 'curl -f https://vehicle-valuation.example.com/api/health || exit 1'
+    - 'curl -f https://vehicle-valuation.example.com/api/uat/health || exit 1'
 
     # Optional: Run smoke tests
     - echo "Production deployment verified successfully"

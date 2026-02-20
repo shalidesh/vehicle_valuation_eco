@@ -134,7 +134,9 @@ async def predict_price(
         # Perform price estimation
         logger.info("Starting price estimation")
         prediction_service = PredictionService(vehicle_repo, mapping_repo)
-        mean_price, flag = prediction_service.estimate_price(manufacturer, erp_model, yom)
+        mean_price, flag = prediction_service.estimate_price(
+            manufacturer, erp_model, yom, transmission, fuel
+        )
 
         logger.info(f"Price prediction successful: {mean_price} ({flag})")
 

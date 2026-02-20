@@ -5,7 +5,7 @@ from typing import List, Optional
 from datetime import datetime, timedelta, timezone
 from ..database import get_db
 from ..models.user import User
-from ..models.vehicle import FastMovingVehicle, ScrapedVehicle
+from ..models.vehicle import FastMovingVehicle, SummaryStatistic
 from ..models.mapping import ERPModelMapping
 from ..models.audit import AuditLog
 from ..middleware.auth import get_current_user
@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 class DashboardStats(BaseModel):
     total_fast_moving: int
-    total_scraped: int
+    total_summary_statistics: int
     total_mappings: int
     recent_updates_count: int
     total_users: int
@@ -66,7 +66,7 @@ async def get_dashboard_stats(
         FastMovingVehicle.manufacturer,
         FastMovingVehicle.model
     ).distinct().count()
-    total_scraped = db.query(func.count(ScrapedVehicle.id)).scalar()
+    total_summary_statistics = db.query(func.count()).select_from(SummaryStatistic).scalar()
     total_mappings = db.query(func.count(ERPModelMapping.id)).scalar()
     total_users = db.query(func.count(UserModel.id)).scalar()
 
@@ -76,7 +76,7 @@ async def get_dashboard_stats(
 
     return {
         "total_fast_moving": total_fast_moving or 0,
-        "total_scraped": total_scraped or 0,
+        "total_summary_statistics": total_summary_statistics or 0,
         "total_mappings": total_mappings or 0,
         "recent_updates_count": recent_updates or 0,
         "total_users": total_users or 0,
@@ -89,7 +89,7 @@ async def get_price_movement(
     model: str,
     yom: int,
     days: int = Query(90, ge=1, le=36500),
-    data_source: str = Query("fast_moving", regex="^(fast_moving|scraped)$"),
+    data_source: str = Query("fast_moving", regex="^(fast_moving|summary)$"),
     vehicle_type: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -124,51 +124,39 @@ async def get_price_movement(
         # Extract price points using the user-specified date field
         price_history = [{"date": v.date, "price": float(v.price)} for v in vehicles]
     else:
-        # Query scraped vehicles for price history
-        query = db.query(ScrapedVehicle).filter(
-            and_(
-                ScrapedVehicle.manufacturer == manufacturer,
-                ScrapedVehicle.model == model,
-                ScrapedVehicle.yom == yom,
-                ScrapedVehicle.updated_date >= start_date,
-                ScrapedVehicle.price.isnot(None),
+        # Query summary statistics - no time-series data, return single point
+        records = (
+            db.query(SummaryStatistic)
+            .filter(
+                SummaryStatistic.make == manufacturer,
+                SummaryStatistic.model == model,
+                SummaryStatistic.yom == str(yom),
+                SummaryStatistic.average_price.isnot(None),
             )
+            .all()
         )
 
-        # Add vehicle type filter if specified
-        if vehicle_type:
-            query = query.filter(ScrapedVehicle.type == vehicle_type)
-
-        vehicles = query.order_by(ScrapedVehicle.updated_date).all()
-
-        if not vehicles:
+        if not records:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="No price history found for this vehicle",
+                detail="No price data found for this vehicle",
             )
 
-        # Extract price points using the updated_date field
-        price_history = [{"date": v.updated_date, "price": float(v.price)} for v in vehicles]
+        # Summary statistics has aggregate data, create a single price point
+        avg = sum(r.average_price for r in records) / len(records)
+        price_history = [{"date": datetime.utcnow(), "price": round(avg, 2)}]
 
     # Calculate statistics
-    prices = [float(v.price) for v in vehicles]
+    prices = [p["price"] for p in price_history]
     avg_price = sum(prices) / len(prices)
     min_price = min(prices)
     max_price = max(prices)
 
-    # Determine trend: compare 3 points (months) before price vs recent point price
-    # Each point represents a monthly average, so we compare the most recent point
-    # with the point from 3 positions before
+    # Determine trend
     trend = "stable"
-
     if len(price_history) >= 4:
-        # Get the most recent price point (last item)
         recent_price = price_history[-1]["price"]
-
-        # Get the price from 3 points before (4th from the end)
         three_points_before_price = price_history[-4]["price"]
-
-        # If the price 3 months ago is greater than recent price, it's decreasing
         if three_points_before_price > recent_price:
             trend = "decreasing"
         else:
@@ -272,19 +260,11 @@ async def get_fast_moving_index(
         min_price = min(prices)
         max_price = max(prices)
 
-        # Determine trend: compare 3 points (months) before price vs recent point price
-        # Each point represents a monthly average, so we compare the most recent point
-        # with the point from 3 positions before
+        # Determine trend
         trend = "stable"
-
         if len(price_history) >= 4:
-            # Get the most recent price point (last item)
             recent_price = price_history[-1]["price"]
-
-            # Get the price from 3 points before (4th from the end)
             three_points_before_price = price_history[-4]["price"]
-
-            # If the price 3 months ago is greater than recent price, it's decreasing
             if three_points_before_price > recent_price:
                 trend = "decreasing"
             else:
@@ -301,7 +281,7 @@ async def get_fast_moving_index(
             "trend": trend,
         }
     else:
-        # Scraped data doesn't support index calculation
+        # Summary data doesn't support index calculation
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Index calculation is only available for Fast Moving Vehicle Data",
@@ -310,7 +290,7 @@ async def get_fast_moving_index(
 
 @router.get("/manufacturers")
 async def get_manufacturers(
-    data_source: str = Query("fast_moving", regex="^(fast_moving|scraped)$"),
+    data_source: str = Query("fast_moving", regex="^(fast_moving|summary)$"),
     vehicle_type: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -322,9 +302,7 @@ async def get_manufacturers(
             query = query.filter(FastMovingVehicle.type == vehicle_type)
         manufacturers = query.all()
     else:
-        query = db.query(ScrapedVehicle.manufacturer).distinct()
-        if vehicle_type:
-            query = query.filter(ScrapedVehicle.type == vehicle_type)
+        query = db.query(SummaryStatistic.make).distinct()
         manufacturers = query.all()
 
     return [m[0] for m in manufacturers if m[0]]
@@ -333,7 +311,7 @@ async def get_manufacturers(
 @router.get("/models")
 async def get_models(
     manufacturer: Optional[str] = None,
-    data_source: str = Query("fast_moving", regex="^(fast_moving|scraped)$"),
+    data_source: str = Query("fast_moving", regex="^(fast_moving|summary)$"),
     vehicle_type: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -347,11 +325,9 @@ async def get_models(
             query = query.filter(FastMovingVehicle.type == vehicle_type)
         models = query.all()
     else:
-        query = db.query(ScrapedVehicle.model).distinct()
+        query = db.query(SummaryStatistic.model).distinct()
         if manufacturer:
-            query = query.filter(ScrapedVehicle.manufacturer == manufacturer)
-        if vehicle_type:
-            query = query.filter(ScrapedVehicle.type == vehicle_type)
+            query = query.filter(SummaryStatistic.make == manufacturer)
         models = query.all()
 
     return [m[0] for m in models if m[0]]
@@ -361,7 +337,7 @@ async def get_models(
 async def get_years(
     manufacturer: Optional[str] = None,
     model: Optional[str] = None,
-    data_source: str = Query("fast_moving", regex="^(fast_moving|scraped)$"),
+    data_source: str = Query("fast_moving", regex="^(fast_moving|summary)$"),
     vehicle_type: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -377,21 +353,19 @@ async def get_years(
             query = query.filter(FastMovingVehicle.type == vehicle_type)
         years = query.order_by(FastMovingVehicle.yom.desc()).all()
     else:
-        query = db.query(ScrapedVehicle.yom).distinct()
+        query = db.query(SummaryStatistic.yom).distinct()
         if manufacturer:
-            query = query.filter(ScrapedVehicle.manufacturer == manufacturer)
+            query = query.filter(SummaryStatistic.make == manufacturer)
         if model:
-            query = query.filter(ScrapedVehicle.model == model)
-        if vehicle_type:
-            query = query.filter(ScrapedVehicle.type == vehicle_type)
-        years = query.order_by(ScrapedVehicle.yom.desc()).all()
+            query = query.filter(SummaryStatistic.model == model)
+        years = query.order_by(SummaryStatistic.yom.desc()).all()
 
     return [y[0] for y in years if y[0]]
 
 
 @router.get("/all-model-years")
 async def get_all_model_years(
-    data_source: str = Query("fast_moving", regex="^(fast_moving|scraped)$"),
+    data_source: str = Query("fast_moving", regex="^(fast_moving|summary)$"),
     vehicle_type: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -412,16 +386,14 @@ async def get_all_model_years(
         ).all()
     else:
         query = db.query(
-            ScrapedVehicle.manufacturer,
-            ScrapedVehicle.model,
-            ScrapedVehicle.yom
+            SummaryStatistic.make,
+            SummaryStatistic.model,
+            SummaryStatistic.yom
         ).distinct()
-        if vehicle_type:
-            query = query.filter(ScrapedVehicle.type == vehicle_type)
         combinations = query.order_by(
-            ScrapedVehicle.manufacturer,
-            ScrapedVehicle.model,
-            ScrapedVehicle.yom.desc()
+            SummaryStatistic.make,
+            SummaryStatistic.model,
+            SummaryStatistic.yom.desc()
         ).all()
 
     # Format the response

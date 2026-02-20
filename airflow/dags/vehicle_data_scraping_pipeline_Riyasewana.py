@@ -75,7 +75,7 @@ with DAG(
     default_args=DEFAULT_ARGS,
     description=DAG_DESCRIPTION,
     # Every Friday at 4:05 PM (cron: minute hour day month weekday)
-    schedule="13 05 * * 1",
+    schedule="36 17 * * 5",
     # catchup=False prevents backfill runs on DAG deployment
     catchup=False,
     tags=DAG_TAGS,

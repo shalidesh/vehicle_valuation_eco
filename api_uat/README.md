@@ -88,6 +88,22 @@ api_uat/
    docker run -p 8443:8443 --env-file .env cdb-vehicle-api
    ```
 
+### Production Deployment (Dual Instance)
+
+In production, two instances of this service run simultaneously:
+
+| Instance | Container | Nginx Route | Purpose |
+|----------|-----------|-------------|---------|
+| **Production** | `cdb_valuation_engine` | `/api/*` | Live production traffic |
+| **UAT** | `cdb_valuation_engine_uat` | `/api/uat/*` | User Acceptance Testing |
+
+Both instances use the same Docker image and share the same database. The UAT instance allows testing new configurations or data changes before promoting to production.
+
+**UAT Endpoints:**
+- API: `http://your-server/api/uat/`
+- Predict: `http://your-server/api/uat/predict`
+- Health: `http://your-server/api/uat/health`
+
 ## API Endpoints
 
 ### Authentication

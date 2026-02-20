@@ -20,18 +20,18 @@
 ## Deployment Architecture
 
 ```
-┌─────────────────────────────────────────────────┐
-│           Nginx Reverse Proxy                   │
-│         (Port 80/443 + Rate Limiting)           │
-└─────────────────────────────────────────────────┘
-                      |
-        ┌─────────────┼─────────────┬──────────────┐
-        |             |             |              |
-┌───────▼──────┐ ┌───▼────────┐ ┌─▼──────────┐ ┌─▼────────┐
-│   Frontend   │ │  Backend   │ │ Valuation  │ │ Database │
-│  Next.js     │ │  FastAPI   │ │   Engine   │ │ Postgres │
-│  Standalone  │ │  4 Workers │ │ AI Service │ │          │
-└──────────────┘ └────────────┘ └────────────┘ └──────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                  Nginx Reverse Proxy                         │
+│                (Port 80/443 + Rate Limiting)                 │
+└──────────────────────────────────────────────────────────────┘
+                           |
+     ┌─────────┬───────────┼───────────┬──────────────┐
+     |         |           |           |              |
+┌────▼───┐ ┌──▼──────┐ ┌──▼────────┐ ┌▼──────────┐ ┌▼────────┐
+│Frontend│ │ Backend │ │Valuation  │ │Valuation  │ │Database │
+│Next.js │ │ FastAPI │ │Engine     │ │Engine UAT │ │Postgres │
+│  /     │ │/backend │ │/api       │ │/api/uat   │ │         │
+└────────┘ └─────────┘ └───────────┘ └───────────┘ └─────────┘
 ```
 
 ## Key Endpoints (Production)
@@ -48,10 +48,15 @@
 - **Analytics Routes**: `http://your-server/backend/analytics/*`
 - **Mapping Routes**: `http://your-server/backend/mapping/*`
 
-### Valuation Engine (AI Prediction)
+### Valuation Engine - Production (AI Prediction)
 - **Base URL**: `http://your-server/api/`
-- **Predict Endpoint**: `http://localhost:8443/api/predict` ✓ (Preserved as requested)
+- **Predict Endpoint**: `http://your-server/api/predict`
 - **Health Check**: `http://your-server/api/health`
+
+### Valuation Engine - UAT (AI Prediction)
+- **Base URL**: `http://your-server/api/uat/`
+- **Predict Endpoint**: `http://your-server/api/uat/predict`
+- **Health Check**: `http://your-server/api/uat/health`
 
 ## Changes from Development
 
@@ -109,7 +114,8 @@ docker-compose --env-file .env.prod -f docker-compose.prod.yml up -d
 docker ps  # Check all containers running
 curl http://localhost/health  # Test Nginx
 curl http://localhost/backend/health  # Test Backend
-curl http://localhost/api/health  # Test Valuation Engine
+curl http://localhost/api/health  # Test Valuation Engine (Production)
+curl http://localhost/api/uat/health  # Test Valuation Engine (UAT)
 ```
 
 ## Scaling Options

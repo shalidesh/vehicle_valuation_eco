@@ -22,12 +22,6 @@ const TABLE_SCHEMAS: TableSchema[] = [
     requiredColumns: ['type', 'manufacturer', 'model', 'yom'],
   },
   {
-    tableName: 'scraped_vehicles',
-    displayName: 'Scraped Vehicles',
-    columns: ['type', 'manufacturer', 'model', 'yom', 'transmission', 'fuel_type', 'mileage', 'price'],
-    requiredColumns: ['type', 'manufacturer', 'model', 'yom'],
-  },
-  {
     tableName: 'erp_model_mappings',
     displayName: 'ERP Model Mappings',
     columns: ['manufacturer', 'erp_name', 'mapped_name'],
